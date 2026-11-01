@@ -80,9 +80,26 @@ def init_db():
                 predicted_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS bets (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id        TEXT,
+                match_name      TEXT NOT NULL,
+                sport           TEXT DEFAULT 'football',
+                competition     TEXT,
+                market          TEXT NOT NULL,
+                pick            TEXT NOT NULL,
+                odds            REAL NOT NULL,
+                stake_fcfa      REAL NOT NULL,
+                status          TEXT DEFAULT 'PENDING',  -- PENDING, WON, LOST, VOID
+                payout_fcfa     REAL DEFAULT 0.0,
+                created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                settled_at      TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_cache_key ON api_cache(cache_key);
             CREATE INDEX IF NOT EXISTS idx_match_history_sport ON match_history(sport);
             CREATE INDEX IF NOT EXISTS idx_predictions_match ON predictions(match_id);
+            CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
         """)
     logger.info("Base de données initialisée.")
 
@@ -191,6 +208,123 @@ def get_history_from_db(sport: str, limit: int = 200) -> list[dict]:
             (sport, limit)
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+# ────────────────────── Gestion du Journal de Paris (Bankroll) ─────────────
+
+def add_bet(
+    match_name: str,
+    competition: str,
+    market: str,
+    pick: str,
+    odds: float,
+    stake_fcfa: float,
+    match_id: str | None = None,
+    sport: str = "football",
+) -> int:
+    """Enregistre un nouveau pari dans le journal."""
+    with managed_connection() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO bets (match_id, match_name, sport, competition, market, pick, odds, stake_fcfa, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+            """,
+            (match_id, match_name, sport, competition, market, pick, float(odds), float(stake_fcfa))
+        )
+        return cur.lastrowid
+
+
+def get_bets(status: str | None = None) -> list[dict]:
+    """Récupère tous les paris du journal, filtrés optionnellement par statut."""
+    with managed_connection() as conn:
+        if status and status != "ALL":
+            rows = conn.execute(
+                "SELECT * FROM bets WHERE status = ? ORDER BY id DESC",
+                (status,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM bets ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def settle_bet(bet_id: int, status: str) -> bool:
+    """
+    Règle un pari (WON / LOST / VOID) et calcule le gain correspondant.
+    """
+    if status not in ("WON", "LOST", "VOID"):
+        return False
+
+    with managed_connection() as conn:
+        row = conn.execute("SELECT odds, stake_fcfa FROM bets WHERE id = ?", (bet_id,)).fetchone()
+        if not row:
+            return False
+
+        odds = row["odds"]
+        stake = row["stake_fcfa"]
+
+        if status == "WON":
+            payout = round(stake * odds, 2)
+        elif status == "VOID":
+            payout = stake
+        else:
+            payout = 0.0
+
+        conn.execute(
+            """
+            UPDATE bets
+            SET status = ?, payout_fcfa = ?, settled_at = ?
+            WHERE id = ?
+            """,
+            (status, payout, datetime.utcnow().isoformat(), bet_id)
+        )
+        return True
+
+
+def delete_bet(bet_id: int) -> bool:
+    """Supprime un pari du journal."""
+    with managed_connection() as conn:
+        conn.execute("DELETE FROM bets WHERE id = ?", (bet_id,))
+        return True
+
+
+def get_bankroll_stats() -> dict:
+    """
+    Calcule les métriques globales de rentabilité sur les paris terminés :
+    Total misé, Total gains, Bénéfice net (FCFA), ROI (%), Taux de réussite (%).
+    """
+    with managed_connection() as conn:
+        settled_rows = conn.execute(
+            "SELECT status, stake_fcfa, payout_fcfa FROM bets WHERE status IN ('WON', 'LOST', 'VOID')"
+        ).fetchall()
+        pending_rows = conn.execute(
+            "SELECT stake_fcfa FROM bets WHERE status = 'PENDING'"
+        ).fetchall()
+
+    total_settled_staked = sum(r["stake_fcfa"] for r in settled_rows if r["status"] != "VOID")
+    total_payout = sum(r["payout_fcfa"] for r in settled_rows if r["status"] != "VOID")
+    net_profit = round(total_payout - total_settled_staked, 2)
+    roi = round((net_profit / total_settled_staked * 100), 1) if total_settled_staked > 0 else 0.0
+
+    won_count = sum(1 for r in settled_rows if r["status"] == "WON")
+    lost_count = sum(1 for r in settled_rows if r["status"] == "LOST")
+    total_settled = won_count + lost_count
+    win_rate = round(won_count / total_settled * 100, 1) if total_settled > 0 else 0.0
+
+    pending_count = len(pending_rows)
+    pending_staked = sum(r["stake_fcfa"] for r in pending_rows)
+
+    return {
+        "total_staked": total_settled_staked,
+        "total_payout": total_payout,
+        "net_profit": net_profit,
+        "roi": roi,
+        "won_count": won_count,
+        "lost_count": lost_count,
+        "win_rate": win_rate,
+        "pending_count": pending_count,
+        "pending_staked": pending_staked,
+        "total_bets": len(settled_rows) + pending_count,
+    }
 
 
 # Initialisation automatique au premier import

@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 from data_client import FootballClient, BasketballClient, OddsClient
 from models.football import FootballModel
 from models.basketball import BasketballModel
-from db import save_prediction, get_history_from_db
+from db import (
+    save_prediction, get_history_from_db,
+    add_bet, get_bets, settle_bet, delete_bet, get_bankroll_stats
+)
+from telegram_alert import send_value_bets_alert, is_telegram_configured
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Configuration Streamlit
@@ -746,6 +750,36 @@ def render_match_card(match: dict, probs: dict, sport: str):
         )
         st.markdown(f'<div class="match-meta">🎯 Scores probables: {scores_html}</div>', unsafe_allow_html=True)
 
+    # Marchés alternatifs (Over/Under, BTTS, Double Chance)
+    markets = probs.get("markets")
+    if markets and sport == "football":
+        with st.expander("📊 Marchés alternatifs (Over/Under, BTTS, Double Chance)", expanded=False):
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.markdown(
+                    f"**⚽ Buts (Over/Under)**<br>"
+                    f"• +1.5 : <strong>{markets.get('over_1_5', 0)*100:.1f}%</strong><br>"
+                    f"• <strong>+2.5</strong> : <strong style='color:#39d353;'>{markets.get('over_2_5', 0)*100:.1f}%</strong><br>"
+                    f"• -2.5 : <strong>{markets.get('under_2_5', 0)*100:.1f}%</strong><br>"
+                    f"• +3.5 : <strong>{markets.get('over_3_5', 0)*100:.1f}%</strong>",
+                    unsafe_allow_html=True
+                )
+            with m2:
+                st.markdown(
+                    f"**🥅 Les deux marquent**<br>"
+                    f"• Oui : <strong style='color:#58a6ff;'>{markets.get('btts_yes', 0)*100:.1f}%</strong><br>"
+                    f"• Non : <strong>{markets.get('btts_no', 0)*100:.1f}%</strong>",
+                    unsafe_allow_html=True
+                )
+            with m3:
+                st.markdown(
+                    f"**🛡️ Double Chance**<br>"
+                    f"• 1X : <strong>{markets.get('dc_1x', 0)*100:.1f}%</strong><br>"
+                    f"• X2 : <strong>{markets.get('dc_x2', 0)*100:.1f}%</strong><br>"
+                    f"• 12 : <strong>{markets.get('dc_12', 0)*100:.1f}%</strong>",
+                    unsafe_allow_html=True
+                )
+
     # Méta info supplémentaire
     if elo_info or model_type:
         st.markdown(f"""
@@ -933,6 +967,13 @@ def render_sidebar():
         st.markdown(
             f"{'✅' if bball_key else '⚠️'} **balldontlie** "
             f"{'(clé configurée)' if bball_key else '(clé optionnelle)'}"
+        )
+
+        # Statut Telegram Bot
+        tg_ready = is_telegram_configured()
+        st.markdown(
+            f"{'✅' if tg_ready else '⚠️'} **Telegram Bot** "
+            f"{'(alertes actives)' if tg_ready else '(optionnel - alertes désactivées)'}"
         )
 
         st.markdown("---")
@@ -1341,6 +1382,19 @@ def render_value_bets_tab():
       <div class="stat-label">Total mises Kelly ({currency})</div>
     </div>""", unsafe_allow_html=True)
 
+    # ── Bouton d'alerte Telegram ──────────────────────────────────────────
+    c_tg1, c_tg2 = st.columns([1, 1])
+    with c_tg1:
+        if st.button("📲 Envoyer le Top 5 Value Bets sur Telegram", use_container_width=True, key="btn_send_tg_top5"):
+            if not is_telegram_configured():
+                st.warning("⚠️ Pour recevoir les alertes sur smartphone, ajoutez `TELEGRAM_BOT_TOKEN` et `TELEGRAM_CHAT_ID` dans votre fichier `.env`.")
+            else:
+                ok, msg = send_value_bets_alert(value_bets, bankroll=bankroll, currency=currency)
+                if ok:
+                    st.success(f"✅ {msg}")
+                else:
+                    st.error(f"❌ {msg}")
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     if not value_bets:
@@ -1360,21 +1414,34 @@ def render_value_bets_tab():
             f"(quart-Kelly sur {bankroll_str})"
             if vb["kelly_pct"] > 0 else "Mise non conseillée"
         )
-        st.markdown(f"""
-        <div class="vb-row {'top' if is_top else ''}">
-          <div class="vb-ev">+{ev_pct}%</div>
-          <div class="vb-teams">
-            <div class="vb-match">{vb['match']}</div>
-            <div class="vb-comp">{vb['competition']} · {vb['date']}</div>
-            <div class="vb-pick">🎯 Miser sur : {vb['pick']} @ {vb['odd']:.2f}</div>
-            <div class="vb-kelly">{kelly_str}</div>
-          </div>
-          <div style="text-align:right;min-width:80px;">
-            <div style="color:#8b949e;font-size:0.72rem;">Prob modèle</div>
-            <div style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">{prob_pct}%</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        col_vb_card, col_vb_btn = st.columns([5, 1])
+        with col_vb_card:
+            st.markdown(f"""
+            <div class="vb-row {'top' if is_top else ''}">
+              <div class="vb-ev">+{ev_pct}%</div>
+              <div class="vb-teams">
+                <div class="vb-match">{vb['match']}</div>
+                <div class="vb-comp">{vb['competition']} · {vb['date']}</div>
+                <div class="vb-pick">🎯 Miser sur : {vb['pick']} @ {vb['odd']:.2f}</div>
+                <div class="vb-kelly">{kelly_str}</div>
+              </div>
+              <div style="text-align:right;min-width:80px;">
+                <div style="color:#8b949e;font-size:0.72rem;">Prob modèle</div>
+                <div style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">{prob_pct}%</div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_vb_btn:
+            if st.button("💾 Suivre", key=f"add_vb_btn_{i}", help="Ajouter ce pari à votre journal de bankroll"):
+                add_bet(
+                    match_name=vb["match"],
+                    competition=vb.get("competition", "Football"),
+                    market="1X2",
+                    pick=f"{vb['pick']} @ {vb['odd']:.2f}",
+                    odds=vb["odd"],
+                    stake_fcfa=vb["stake"],
+                )
+                st.toast(f"Pari {vb['match']} ajouté à votre journal !", icon="✅")
 
     st.markdown("---")
     st.markdown(
@@ -1383,6 +1450,161 @@ def render_value_bets_tab():
         "Ces calculs sont indicatifs et ne constituent pas un conseil en paris.</small>",
         unsafe_allow_html=True,
     )
+
+
+def render_bets_journal_tab():
+    """
+    Onglet '💼 Mes Paris' (Bankroll Management) :
+    - Statistiques de rentabilité en FCFA (Bénéfice net, ROI %, Taux de réussite)
+    - Enregistrement de paris (Simple / Combiné / Congobet)
+    - Suivi des tickets en cours (Gagné / Perdu / Annuler)
+    - Historique des paris archivés
+    """
+    currency = st.session_state.get("app_currency", "FCFA")
+    stats = get_bankroll_stats()
+
+    st.markdown("### 💼 Journal de Paris & Gestion de Bankroll")
+    st.markdown(
+        "<small style='color:#8b949e'>Suivez vos vrais paris placés sur <strong>Congobet</strong>, "
+        "mesurez votre ROI réel et sécurisez votre capital en FCFA.</small>",
+        unsafe_allow_html=True
+    )
+
+    # ── KPIs de Bankroll ──
+    profit = stats["net_profit"]
+    profit_color = "#39d353" if profit > 0 else "#ff4757" if profit < 0 else "#8b949e"
+    profit_sign = "+" if profit > 0 else ""
+    profit_str = f"{profit_sign}{format_currency(profit, currency)}"
+    pending_str = format_currency(stats["pending_staked"], currency)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:{profit_color}">{profit_str}</div>
+      <div class="stat-label">Bénéfice Net ({currency})</div>
+    </div>""", unsafe_allow_html=True)
+
+    roi_color = "#39d353" if stats["roi"] > 0 else "#ff4757" if stats["roi"] < 0 else "#8b949e"
+    k2.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:{roi_color}">{stats['roi']:+.1f}%</div>
+      <div class="stat-label">ROI Réel</div>
+    </div>""", unsafe_allow_html=True)
+
+    total_settled = stats["won_count"] + stats["lost_count"]
+    k3.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:#58a6ff">{stats['win_rate']:.1f}%</div>
+      <div class="stat-label">Taux Réussite ({stats['won_count']}/{total_settled})</div>
+    </div>""", unsafe_allow_html=True)
+
+    k4.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:#e3b341">{stats['pending_count']}</div>
+      <div class="stat-label">En cours ({pending_str})</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Formulaire d'enregistrement ──
+    with st.expander("➕ Enregistrer un nouveau pari (placé sur Congobet)", expanded=False):
+        with st.form("form_add_bet", clear_on_submit=True):
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                b_match = st.text_input("Match", placeholder="ex: Real Madrid vs Barcelone")
+                b_comp = st.selectbox(
+                    "Compétition",
+                    ["Premier League", "La Liga", "Ligue 1", "Bundesliga", "Serie A", "Champions League", "Coupe du Monde", "CAN", "NBA", "Autre"]
+                )
+                b_market = st.selectbox(
+                    "Marché",
+                    ["1X2 (Résultat)", "Over/Under 2.5 buts", "Les deux marquent (BTTS)", "Double Chance", "Score exact", "Combiné", "Autre"]
+                )
+            with f_col2:
+                b_pick = st.text_input("Sélection / Pronostic", placeholder="ex: Victoire Real Madrid @ 2.10")
+                b_odd = st.number_input("Cote décimale", min_value=1.01, max_value=200.0, value=1.90, step=0.05)
+                default_stake = 5000 if currency == "FCFA" else 20.0
+                b_stake = st.number_input(f"Mise ({currency})", min_value=100 if currency == "FCFA" else 1.0, value=float(default_stake), step=500.0 if currency == "FCFA" else 5.0)
+
+            submitted = st.form_submit_button("💾 Enregistrer le pari", use_container_width=True)
+            if submitted:
+                if not b_match or not b_pick:
+                    st.error("Veuillez renseigner le nom du match et votre sélection.")
+                else:
+                    new_id = add_bet(
+                        match_name=b_match.strip(),
+                        competition=b_comp,
+                        market=b_market,
+                        pick=b_pick.strip(),
+                        odds=b_odd,
+                        stake_fcfa=b_stake,
+                    )
+                    st.success(f"✅ Pari #{new_id} enregistré avec succès !")
+                    st.rerun()
+
+    # ── Paris en cours ──
+    st.markdown("#### ⏳ Paris en cours (Tickets en attente)")
+    pending_bets = get_bets(status="PENDING")
+
+    if not pending_bets:
+        st.info("Aucun pari en cours pour le moment. Enregistrez vos paris ci-dessus pour suivre vos résultats.")
+    else:
+        for b in pending_bets:
+            pot_payout = round(b["stake_fcfa"] * b["odds"], 2)
+            p_stk = format_currency(b["stake_fcfa"], currency)
+            p_pot = format_currency(pot_payout, currency)
+
+            c_info, c_btn1, c_btn2, c_btn3 = st.columns([3, 1, 1, 0.8])
+            with c_info:
+                st.markdown(f"""
+                <div style="background:#161b22;padding:0.6rem 0.9rem;border-radius:8px;border-left:3px solid #e3b341;margin-bottom:0.4rem;">
+                  <strong>{b['match_name']}</strong> <small style="color:#8b949e">({b['competition']} · {b['market']})</small><br>
+                  <span style="color:#58a6ff;">🎯 {b['pick']} @ {b['odds']:.2f}</span> &nbsp;|&nbsp;
+                  Mise: <strong>{p_stk}</strong> &nbsp;→&nbsp; Gain potentiel: <strong style="color:#39d353">{p_pot}</strong>
+                </div>
+                """, unsafe_allow_html=True)
+            with c_btn1:
+                if st.button("✅ Gagné", key=f"won_{b['id']}", use_container_width=True):
+                    settle_bet(b["id"], "WON")
+                    st.rerun()
+            with c_btn2:
+                if st.button("❌ Perdu", key=f"lost_{b['id']}", use_container_width=True):
+                    settle_bet(b["id"], "LOST")
+                    st.rerun()
+            with c_btn3:
+                if st.button("🗑️", key=f"del_{b['id']}", use_container_width=True, help="Supprimer ce pari"):
+                    delete_bet(b["id"])
+                    st.rerun()
+
+    st.markdown("---")
+
+    # ── Historique des paris réglés ──
+    st.markdown("#### 📜 Historique des paris terminés")
+    all_bets = get_bets()
+    settled = [b for b in all_bets if b["status"] != "PENDING"]
+
+    if not settled:
+        st.caption("Aucun pari archivé pour l'instant.")
+        return
+
+    hist_data = []
+    for b in settled:
+        net = round(b["payout_fcfa"] - b["stake_fcfa"], 2)
+        badge = "✅ GAGNÉ" if b["status"] == "WON" else "❌ PERDU" if b["status"] == "LOST" else "⚪ NUL"
+        hist_data.append({
+            "ID": f"#{b['id']}",
+            "Date": b["created_at"][:10] if b.get("created_at") else "",
+            "Match": b["match_name"],
+            "Marché": b["market"],
+            "Sélection": b["pick"],
+            "Cote": f"{b['odds']:.2f}",
+            "Mise": format_currency(b["stake_fcfa"], currency),
+            "Résultat": badge,
+            "Gain": format_currency(b["payout_fcfa"], currency),
+            "Bénéfice": f"{net:+,.0f} {currency}".replace(",", " ") if currency == "FCFA" else f"{net:+.2f} €",
+        })
+
+    st.dataframe(pd.DataFrame(hist_data), use_container_width=True, hide_index=True)
 
 
 def render_calendar_tab():
@@ -2016,9 +2238,9 @@ def main():
         )
 
     # ── Onglets principaux ─────────────────────────────────────────────────
-    tab_foot, tab_bask, tab_week, tab_vb, tab_cal, tab_perf = st.tabs(
+    tab_foot, tab_bask, tab_week, tab_vb, tab_bets, tab_cal, tab_perf = st.tabs(
         ["⚽ Football", "🏀 Basketball",
-         "📅 Semaine", "🔥 Value Bets", "🗓️ Calendrier", "📊 Performance"]
+         "📅 Semaine", "🔥 Value Bets", "💼 Mes Paris", "🗓️ Calendrier", "📊 Performance"]
     )
 
     with tab_foot:
@@ -2032,6 +2254,9 @@ def main():
 
     with tab_vb:
         render_value_bets_tab()
+
+    with tab_bets:
+        render_bets_journal_tab()
 
     with tab_cal:
         render_calendar_tab()

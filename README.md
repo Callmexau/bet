@@ -171,6 +171,24 @@ CACHE_TTL = {
 
 ---
 
+## ☁️ Déploiement Cloud Gratuit (Streamlit Community Cloud)
+
+Vous pouvez déployer cette application gratuitement pour y accéder 24h/24 depuis votre smartphone :
+
+1. Rendez-vous sur [share.streamlit.io](https://share.streamlit.io/) et connectez-vous avec votre compte GitHub (**Callmexau**).
+2. Cliquez sur **"New app"** et sélectionnez le dépôt **`Callmexau/bet`**, branche `main`, fichier `app.py`.
+3. Cliquez sur **"Advanced settings"** > **Secrets** et collez vos clés d'environnement :
+   ```toml
+   FOOTBALL_DATA_API_KEY = "votre_cle"
+   ODDS_API_KEY = "votre_cle"
+   BALLDONTLIE_API_KEY = "votre_cle"
+   TELEGRAM_BOT_TOKEN = "votre_token_optionnel"
+   TELEGRAM_CHAT_ID = "votre_chat_id_optionnel"
+   ```
+4. Cliquez sur **Deploy** ! Votre application aura une URL publique HTTPS accessible partout.
+
+---
+
 ## ⚠️ Avertissement légal
 
 > Les probabilités affichées sont **indicatives** et basées sur des modèles statistiques.

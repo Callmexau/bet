@@ -67,12 +67,24 @@ class EloRating:
             "away_win": round(adjusted_away / total, 4),
         }
 
-    def update(self, home_team: str, away_team: str, result: str):
+    def update(
+        self,
+        home_team: str,
+        away_team: str,
+        result: str,
+        home_score: int = 0,
+        away_score: int = 0,
+        weight: float = 1.0,
+        home_advantage: float | None = None,
+    ):
         """
-        Met à jour les ratings après un match.
-        result: 'H' (home win), 'D' (draw), 'A' (away win)
+        Met à jour les ratings après un match avec prise en compte :
+        - De la différence de buts (multiplicateur standard FIFA / World Football Elo)
+        - De la récence du match (pondération temporelle)
+        - De l'avantage domicile configurable (ex: 0 pour terrain neutre WC/CAN)
         """
-        home_rating = self.ratings[home_team] + self.home_advantage
+        adv = home_advantage if home_advantage is not None else self.home_advantage
+        home_rating = self.ratings[home_team] + adv
         away_rating = self.ratings[away_team]
 
         exp_home = self.expected_score(home_rating, away_rating)
@@ -86,23 +98,33 @@ class EloRating:
         else:  # 'A'
             score_home, score_away = 0.0, 1.0
 
-        # Mise à jour des ratings (sans le bonus domicile dans le storage)
-        self.ratings[home_team] += self.k_factor * (score_home - exp_home)
-        self.ratings[away_team] += self.k_factor * (score_away - exp_away)
+        # Multiplicateur d'écart de buts (FIFA Elo rating standard)
+        diff = abs(home_score - away_score)
+        if diff <= 1:
+            margin_mult = 1.0
+        elif diff == 2:
+            margin_mult = 1.5
+        else:
+            margin_mult = (11.0 + diff) / 8.0
+
+        k_effective = self.k_factor * margin_mult * max(0.2, min(weight, 1.5))
+
+        # Mise à jour des ratings
+        self.ratings[home_team] += k_effective * (score_home - exp_home)
+        self.ratings[away_team] += k_effective * (score_away - exp_away)
 
     def train_on_history(self, matches: list[dict]) -> "EloRating":
         """
         Entraîne le modèle Elo sur un historique de matchs.
-        Chaque match doit avoir : home_team, away_team, home_score, away_score.
-        Retourne self pour le chaînage.
+        Applique une pondération temporelle (les matchs récents ont plus d'impact).
         """
-        # Tri chronologique pour rejouer dans l'ordre
         sorted_matches = sorted(
             [m for m in matches if m.get("home_score") is not None and m.get("away_score") is not None],
             key=lambda x: x.get("match_date", "")
         )
 
-        for match in sorted_matches:
+        n_matches = len(sorted_matches)
+        for idx, match in enumerate(sorted_matches):
             home = match["home_team"]
             away = match["away_team"]
             hs = match["home_score"]
@@ -115,9 +137,21 @@ class EloRating:
             else:
                 result = "D"
 
-            self.update(home, away, result)
+            # Facteur de récence progressif (de 0.6 pour les plus anciens à 1.2 pour les plus récents)
+            recency_weight = 0.6 + 0.6 * (idx / max(n_matches, 1))
 
-        logger.debug("Elo entraîné sur %d matchs. Équipes: %d", len(sorted_matches), len(self.ratings))
+            # Neutral venue si compétition internationale (WC, CAN)
+            comp = match.get("competition", "") or match.get("competition_code", "")
+            adv = 0 if any(code in comp for code in ("WC", "CAN", "World Cup", "Nations")) else self.home_advantage
+
+            self.update(
+                home, away, result,
+                home_score=hs, away_score=as_,
+                weight=recency_weight,
+                home_advantage=adv
+            )
+
+        logger.debug("Elo entraîné sur %d matchs avec pondération de récence. Équipes: %d", n_matches, len(self.ratings))
         return self
 
     def get_rating(self, team: str) -> float:

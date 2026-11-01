@@ -26,6 +26,18 @@ LEAGUE_AVG_GOALS_AWAY = 1.15   # Buts/match à l'extérieur
 MAX_GOALS = 10                  # Plafond pour le calcul Poisson
 RED_CARD_PENALTY = 0.15        # -15% de λ par carton rouge pour l'équipe pénalisée
 
+# Facteurs d'avantage domicile spécifiques par compétition
+LEAGUE_HOME_FACTORS = {
+    "PL": 1.12,   # Premier League
+    "PD": 1.16,   # La Liga (avantage domicile fort en Espagne)
+    "FL1": 1.14,  # Ligue 1
+    "BL1": 1.15,  # Bundesliga (ligue prolifique)
+    "SA": 1.13,   # Serie A
+    "CL": 1.10,   # Champions League (équipes élites, écart réduit)
+    "WC": 1.00,   # Coupe du Monde (terrain neutre par défaut)
+    "CAN": 1.00,  # CAN (terrain neutre par défaut)
+}
+
 # Paramètre de sur-corrélation Dixon-Coles (ajusté empiriquement sur données européennes)
 # ρ > 0 → les scores {0-0, 1-0, 0-1, 1-1} sont plus probables qu'un Poisson indépendant
 RHO = 0.10
@@ -70,10 +82,10 @@ class FootballModel:
 
     # ── Calcul des λ via Elo ───────────────────────────────────────────────
 
-    def _expected_goals(self, home_team: str, away_team: str) -> tuple[float, float]:
+    def _expected_goals(self, home_team: str, away_team: str, comp_code: str = "") -> tuple[float, float]:
         """
         Convertit la différence Elo en buts attendus (λ) via une fonction puissance.
-        Formule : λH = avg_H × √(strength_factor),  λA = avg_A / √(strength_factor)
+        Prend en compte l'avantage domicile spécifique à chaque championnat (ex: neutral en CAN/WC).
         """
         home_rating = self.elo.get_rating(home_team)
         away_rating = self.elo.get_rating(away_team)
@@ -81,10 +93,44 @@ class FootballModel:
         delta = (home_rating - away_rating) / 400.0
         strength_factor = math.pow(10, delta)
 
-        lambda_home = LEAGUE_AVG_GOALS_HOME * math.sqrt(strength_factor)
-        lambda_away = LEAGUE_AVG_GOALS_AWAY / math.sqrt(strength_factor)
+        home_factor = LEAGUE_HOME_FACTORS.get(comp_code, 1.12)
+        base_h = LEAGUE_AVG_GOALS_HOME * (home_factor / 1.12)
+        base_a = LEAGUE_AVG_GOALS_AWAY / (home_factor / 1.12)
+
+        lambda_home = base_h * math.sqrt(strength_factor)
+        lambda_away = base_a / math.sqrt(strength_factor)
 
         return max(0.3, min(lambda_home, 5.0)), max(0.3, min(lambda_away, 5.0))
+
+    def _compute_alternative_markets(self, grid: dict[tuple[int, int], float], probs_1x2: dict) -> dict:
+        """
+        Calcule les probabilités des marchés alternatifs depuis la distribution de Poisson Dixon-Coles :
+        - Over / Under 1.5, 2.5, 3.5 buts
+        - Both Teams to Score (BTTS) Oui / Non
+        - Double Chance (1X, 12, X2)
+        """
+        over15 = sum(p for (h, a), p in grid.items() if (h + a) > 1.5)
+        over25 = sum(p for (h, a), p in grid.items() if (h + a) > 2.5)
+        over35 = sum(p for (h, a), p in grid.items() if (h + a) > 3.5)
+        btts_yes = sum(p for (h, a), p in grid.items() if h >= 1 and a >= 1)
+
+        hw = probs_1x2.get("home_win", 0)
+        dr = probs_1x2.get("draw", 0)
+        aw = probs_1x2.get("away_win", 0)
+
+        return {
+            "over_1_5":  float(round(over15, 4)),
+            "under_1_5": float(round(max(0.0, 1.0 - over15), 4)),
+            "over_2_5":  float(round(over25, 4)),
+            "under_2_5": float(round(max(0.0, 1.0 - over25), 4)),
+            "over_3_5":  float(round(over35, 4)),
+            "under_3_5": float(round(max(0.0, 1.0 - over35), 4)),
+            "btts_yes":  float(round(btts_yes, 4)),
+            "btts_no":   float(round(max(0.0, 1.0 - btts_yes), 4)),
+            "dc_1x":     float(round(min(1.0, hw + dr), 4)),
+            "dc_x2":     float(round(min(1.0, dr + aw), 4)),
+            "dc_12":     float(round(min(1.0, hw + aw), 4)),
+        }
 
     # ── Modèle Dixon-Coles ─────────────────────────────────────────────────
 
@@ -158,7 +204,7 @@ class FootballModel:
 
     # ── Prédiction avant-match ─────────────────────────────────────────────
 
-    def predict_prematch(self, home_team: str, away_team: str) -> dict:
+    def predict_prematch(self, home_team: str, away_team: str, comp_code: str = "") -> dict:
         """
         Prédiction avant le coup d'envoi via Elo + Dixon-Coles.
 
@@ -167,15 +213,17 @@ class FootballModel:
             lambda_home, lambda_away    — buts attendus
             home_elo, away_elo          — ratings Elo
             top_scores                  — 5 scores les plus probables
+            markets                     — marchés alternatifs (Over/Under, BTTS, Double Chance)
             model                       — "prematch_dc" (Dixon-Coles)
         """
-        lh, la = self._expected_goals(home_team, away_team)
+        lh, la = self._expected_goals(home_team, away_team, comp_code=comp_code)
         probs = self._dixon_coles_probs(lh, la)
 
-        # Top 5 scores les plus probables
+        # Grille de scores et marchés alternatifs
         grid = self._score_grid(lh, la)
         top5 = sorted(grid.items(), key=lambda x: x[1], reverse=True)[:5]
         top_scores = [{"score": f"{h}-{a}", "prob": round(p * 100, 1)} for (h, a), p in top5]
+        alt_markets = self._compute_alternative_markets(grid, probs)
 
         return {
             **probs,
@@ -184,6 +232,7 @@ class FootballModel:
             "home_elo": round(self.elo.get_rating(home_team), 0),
             "away_elo": round(self.elo.get_rating(away_team), 0),
             "top_scores": top_scores,
+            "markets": alt_markets,
             "model": "prematch_dc",
         }
 
@@ -202,14 +251,15 @@ class FootballModel:
         minute     = match_state.get("minute") or 0
         red_home   = match_state.get("red_cards_home", 0)
         red_away   = match_state.get("red_cards_away", 0)
+        comp_code  = match_state.get("competition_code", "")
 
         if minute == 0 or (home_score == 0 and away_score == 0 and minute < 5):
-            result = self.predict_prematch(home_team, away_team)
+            result = self.predict_prematch(home_team, away_team, comp_code=comp_code)
             result["model"] = "live_prematch"
             return result
 
         time_remaining_frac = max(0.0, (90 - minute) / 90.0)
-        lh_full, la_full = self._expected_goals(home_team, away_team)
+        lh_full, la_full = self._expected_goals(home_team, away_team, comp_code=comp_code)
 
         lh_rem = lh_full * time_remaining_frac * ((1 - RED_CARD_PENALTY) ** red_home)
         la_rem = la_full * time_remaining_frac * ((1 - RED_CARD_PENALTY) ** red_away)
@@ -217,17 +267,18 @@ class FootballModel:
         p_home_win = 0.0
         p_draw     = 0.0
         p_away_win = 0.0
+        live_grid  = {}
 
         for h_add in range(MAX_GOALS + 1):
             p_h = poisson.pmf(h_add, max(0.001, lh_rem))
             for a_add in range(MAX_GOALS + 1):
                 p_a   = poisson.pmf(a_add, max(0.001, la_rem))
-                # Correction DC uniquement sur les buts restants (scores partiels faibles)
                 tau   = _tau(h_add, a_add, lh_rem, la_rem, self.rho)
                 joint = tau * p_h * p_a
 
                 fh = home_score + h_add
                 fa = away_score + a_add
+                live_grid[(fh, fa)] = live_grid.get((fh, fa), 0.0) + joint
 
                 if fh > fa:
                     p_home_win += joint
@@ -237,16 +288,25 @@ class FootballModel:
                     p_away_win += joint
 
         total = p_home_win + p_draw + p_away_win or 1.0
+        probs_1x2 = {
+            "home_win": round(p_home_win / total, 4),
+            "draw":     round(p_draw     / total, 4),
+            "away_win": round(p_away_win / total, 4),
+        }
+
+        # Normalisation de la grille en direct pour marchés alternatifs
+        tot_grid = sum(live_grid.values()) or 1.0
+        norm_grid = {k: v / tot_grid for k, v in live_grid.items()}
+        alt_markets = self._compute_alternative_markets(norm_grid, probs_1x2)
 
         return {
-            "home_win":               round(p_home_win / total, 4),
-            "draw":                   round(p_draw     / total, 4),
-            "away_win":               round(p_away_win / total, 4),
+            **probs_1x2,
             "lambda_home_remaining":  round(lh_rem, 2),
             "lambda_away_remaining":  round(la_rem, 2),
             "home_score":             home_score,
             "away_score":             away_score,
             "minute":                 minute,
+            "markets":                alt_markets,
             "model":                  "live_dc",
         }
 
@@ -262,6 +322,7 @@ class FootballModel:
         return self.predict_prematch(
             match_state.get("home_team", ""),
             match_state.get("away_team", ""),
+            comp_code=match_state.get("competition_code", ""),
         )
 
     def compute_ev(self, probs: dict, odds: dict) -> dict:
