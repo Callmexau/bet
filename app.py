@@ -1,0 +1,2058 @@
+# -*- coding: utf-8 -*-
+"""
+app.py - Tableau de bord de pronostics sportifs
+Interface Streamlit avec onglets Football / Basketball,
+rafraîchissement automatique toutes les 30 secondes,
+et graphiques d'évolution des probabilités en direct.
+
+Lancement : streamlit run app.py
+"""
+
+import time
+import logging
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Configuration du logging ───────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ── Imports locaux ─────────────────────────────────────────────────────────
+from data_client import FootballClient, BasketballClient, OddsClient
+from models.football import FootballModel
+from models.basketball import BasketballModel
+from db import save_prediction, get_history_from_db
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Configuration Streamlit
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.set_page_config(
+    page_title="⚽🏀 SportsPredikt — Pronostics en Direct",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ── CSS premium ────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800;900&display=swap');
+
+  /* ════ Variables de design ════ */
+  :root {
+    --bg-0:       #080c10;   /* fond app */
+    --bg-1:       #0d1117;   /* fond principal */
+    --bg-2:       #161b22;   /* fond carte */
+    --bg-3:       #1c2128;   /* fond carte hover */
+    --bg-4:       #21262d;   /* fond éléments secondaires */
+
+    --green:      #2dca56;
+    --green-dim:  rgba(45,202,86,0.12);
+    --green-border: rgba(45,202,86,0.35);
+    --blue:       #4e9eff;
+    --blue-dim:   rgba(78,158,255,0.10);
+    --blue-border:rgba(78,158,255,0.30);
+    --yellow:     #e3a234;
+    --yellow-dim: rgba(227,162,52,0.10);
+    --yellow-border:rgba(227,162,52,0.30);
+    --red:        #ff4757;
+    --red-dim:    rgba(255,71,87,0.12);
+    --orange:     #ff7043;
+    --purple:     #a78bfa;
+
+    --text-0:     #f0f6fc;   /* blanc */
+    --text-1:     #c9d1d9;   /* gris clair */
+    --text-2:     #8b949e;   /* gris moyen */
+    --text-3:     #484f58;   /* gris foncé */
+
+    --border:     #21262d;
+    --radius-sm:  8px;
+    --radius-md:  14px;
+    --radius-lg:  20px;
+    --shadow:     0 4px 24px rgba(0,0,0,0.4);
+    --shadow-green: 0 0 20px rgba(45,202,86,0.20);
+  }
+
+  /* ════ Reset ════ */
+  html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-1);
+    color: var(--text-0);
+  }
+  .stApp { background-color: var(--bg-1); }
+  .block-container { padding-top: 1rem !important; }
+
+  /* ════ Header ════ */
+  .main-header {
+    text-align: center;
+    padding: 2.5rem 0 1.5rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+  }
+  .main-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 3rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, #4e9eff 0%, #a78bfa 50%, #2dca56 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin: 0;
+    letter-spacing: -1px;
+  }
+  .main-subtitle {
+    color: var(--text-2);
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+  }
+
+  /* ════ Avertissement ════ */
+  .warning-banner {
+    background: rgba(227,162,52,0.07);
+    border: 1px solid var(--yellow-border);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 1.2rem;
+    margin-bottom: 1.2rem;
+    text-align: center;
+    color: var(--yellow);
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  /* ════ Onglets ════ */
+  .stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: var(--bg-2);
+    border-radius: var(--radius-md);
+    padding: 5px;
+    border: 1px solid var(--border);
+  }
+  .stTabs [data-baseweb="tab"] {
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.45rem 1.1rem;
+    transition: all 0.15s ease;
+  }
+  .stTabs [aria-selected="true"] {
+    background: var(--bg-4) !important;
+    color: var(--text-0) !important;
+  }
+
+  /* ════ CARTE MATCH ════ */
+  .match-card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.3rem 1.4rem 1rem;
+    margin-bottom: 1rem;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .match-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--blue), var(--purple));
+    opacity: 0.6;
+  }
+  .match-card.live::after {
+    background: linear-gradient(90deg, var(--red), #ff6b6b);
+    animation: shimmer 2s infinite;
+    opacity: 1;
+  }
+  @keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position: 200% center; }
+  }
+  .match-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+    border-color: rgba(78,158,255,0.25);
+  }
+
+  /* Ligne compétition + badge */
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .card-competition {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  /* Badge LIVE */
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--red);
+    color: white;
+    font-size: 0.68rem;
+    font-weight: 800;
+    padding: 3px 9px;
+    border-radius: 20px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+  }
+  .live-dot {
+    width: 6px; height: 6px;
+    background: white;
+    border-radius: 50%;
+    animation: blink 1s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  /* Équipes + score */
+  .teams-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin-bottom: 1.1rem;
+  }
+  .team-name {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-0);
+    flex: 1;
+    line-height: 1.2;
+  }
+  .team-name.home { text-align: left; }
+  .team-name.away { text-align: right; }
+  .score-box {
+    background: var(--bg-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 1rem;
+    text-align: center;
+    min-width: 80px;
+    flex-shrink: 0;
+  }
+  .score-text {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.7rem;
+    font-weight: 800;
+    color: var(--text-0);
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+  .score-minute {
+    font-size: 0.68rem;
+    color: var(--red);
+    font-weight: 700;
+    margin-top: 2px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ════ BARRES DE PROBABILITÉS ════ */
+  .prob-bar-container { margin: 0.2rem 0 0.9rem; }
+  .prob-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .prob-label-home  { color: var(--blue); }
+  .prob-label-draw  { color: var(--text-2); text-align:center; flex:1; }
+  .prob-label-away  { color: var(--orange); text-align:right; }
+  .prob-bar-wrapper {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    gap: 2px;
+    background: var(--bg-4);
+    padding: 2px;
+    border-radius: 6px;
+  }
+  .prob-segment {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+  }
+  .prob-home { background: linear-gradient(90deg,#2d7aff,#4e9eff); }
+  .prob-draw { background: linear-gradient(90deg,#484f58,#6e7681); }
+  .prob-away { background: linear-gradient(90deg,#e04f2b,#ff7043); }
+
+  /* ════ BANNIÈRE PRONOSTIC (hero) ════ */
+  .reco-banner {
+    width: 100%;
+    border-radius: var(--radius-md);
+    padding: 0.9rem 1.2rem;
+    margin: 0.2rem 0 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+  .reco-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+    line-height: 1.2;
+  }
+  .reco-sub {
+    font-size: 0.75rem;
+    font-weight: 500;
+    opacity: 0.85;
+  }
+
+  /* Niveaux de signal */
+  .reco-strong {
+    background: linear-gradient(135deg, rgba(45,202,86,0.20), rgba(45,202,86,0.10));
+    border: 1.5px solid var(--green);
+    box-shadow: var(--shadow-green);
+  }
+  .reco-strong .reco-title { color: #2dca56; }
+  .reco-strong .reco-sub   { color: rgba(45,202,86,0.80); }
+
+  .reco-medium {
+    background: var(--blue-dim);
+    border: 1.5px solid var(--blue-border);
+  }
+  .reco-medium .reco-title { color: var(--blue); }
+  .reco-medium .reco-sub   { color: rgba(78,158,255,0.75); }
+
+  .reco-low {
+    background: var(--yellow-dim);
+    border: 1.5px solid var(--yellow-border);
+  }
+  .reco-low .reco-title { color: var(--yellow); }
+  .reco-low .reco-sub   { color: rgba(227,162,52,0.75); }
+
+  .reco-skip {
+    background: rgba(33,38,45,0.6);
+    border: 1px dashed var(--text-3);
+  }
+  .reco-skip .reco-title { color: var(--text-2); }
+  .reco-skip .reco-sub   { color: var(--text-3); }
+
+  /* ════ PILLS Scores probables ════ */
+  .score-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 0.3rem;
+  }
+  .score-pill {
+    background: var(--bg-4);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .score-pill.top {
+    background: rgba(45,202,86,0.12);
+    border-color: rgba(45,202,86,0.30);
+    color: var(--green);
+  }
+
+  /* ════ Méta info ════ */
+  .match-meta {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+  .meta-tag {
+    background: var(--bg-4);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    color: var(--text-2);
+    font-weight: 500;
+  }
+
+  /* ════ Stat cards (métriques) ════ */
+  .stat-card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.1rem 1rem;
+    text-align: center;
+    transition: border-color 0.15s;
+  }
+  .stat-card:hover { border-color: var(--blue-border); }
+  .stat-value {
+    font-family: 'Outfit', sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--blue);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 0.72rem;
+    color: var(--text-2);
+    margin-top: 0.3rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ════ Empty state ════ */
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--text-2);
+  }
+  .empty-icon { font-size: 3.5rem; margin-bottom: 1rem; opacity: 0.7; }
+  .empty-text { font-size: 1rem; line-height: 1.6; }
+
+  /* ════ Value Bets rows ════ */
+  .vb-row {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+    transition: all 0.15s ease;
+    cursor: default;
+  }
+  .vb-row:hover { border-color: var(--green-border); background: var(--green-dim); }
+  .vb-row.top   {
+    border-color: var(--green);
+    background: var(--green-dim);
+    box-shadow: 0 0 16px rgba(45,202,86,0.12);
+  }
+  .vb-ev    { font-family:'Outfit',sans-serif; font-size:1.5rem; font-weight:900; color:var(--green); min-width:64px; text-align:center; }
+  .vb-teams { flex:1; min-width:160px; }
+  .vb-match { font-size:0.92rem; font-weight:700; color:var(--text-0); margin-bottom:3px; }
+  .vb-comp  { font-size:0.7rem; color:var(--text-2); margin-bottom:4px; }
+  .vb-pick  { font-size:0.82rem; font-weight:700; color:var(--blue); margin-bottom:2px; }
+  .vb-kelly { font-size:0.76rem; color:var(--yellow); }
+
+  /* ════ Calendrier ════ */
+  .cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    margin: 0.8rem 0;
+  }
+  .cal-day-header {
+    text-align: center;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--text-2);
+    padding: 4px 0;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .cal-cell {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 5px;
+    min-height: 70px;
+    font-size: 0.68rem;
+    transition: all 0.15s ease;
+  }
+  .cal-cell.today {
+    border-color: var(--purple);
+    background: rgba(167,139,250,0.07);
+  }
+  .cal-cell.has-value {
+    border-color: var(--green);
+    background: var(--green-dim);
+  }
+  .cal-date { font-weight: 800; color: var(--text-0); font-size: 0.85rem; margin-bottom:4px; }
+  .cal-badge {
+    display: block;
+    border-radius: 4px;
+    padding: 2px 5px;
+    margin-bottom: 2px;
+    font-size: 0.62rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cal-badge.value  { background: var(--green-dim);  color: var(--green); }
+  .cal-badge.normal { background: var(--blue-dim);   color: var(--blue); }
+  .cal-badge.low    { background: var(--bg-4);       color: var(--text-2); }
+
+  /* ════ Sidebar ════ */
+  section[data-testid="stSidebar"] {
+    background: var(--bg-0) !important;
+    border-right: 1px solid var(--border) !important;
+  }
+
+  /* ════ Inputs Streamlit ════ */
+  .stNumberInput input, .stSlider { accent-color: var(--green) !important; }
+  div[data-testid="stMetricValue"] { color: var(--text-0) !important; }
+
+  /* ════ Masquer UI Streamlit ════ */
+  #MainMenu { visibility: hidden; }
+  footer { visibility: hidden; }
+  .stDeployButton { display: none; }
+</style>
+""", unsafe_allow_html=True)
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Utilitaires d'affichage
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_recommendation(probs: dict, sport: str, match: dict, odds: dict | None = None) -> dict:
+    """
+    Génère une recommandation simple et lisible.
+
+    Logique :
+    - Si odds dispo   : recommande l'issue avec EV la plus élevée (si EV > 0)
+    - Sans odds       : recommande l'issue avec la probabilité la plus haute
+    - Seuils confiance : Forte >= 60%, Moyenne 45-60%, Faible 33-45%, Passer < 33%
+
+    Retourne :
+        {
+          outcome : 'home_win' | 'draw' | 'away_win' | 'skip'
+          label   : 'Arsenal'  | 'Nul'  | 'Real Madrid' | 'Passer'
+          conf    : 0.68        (probabilité modèle)
+          level   : 'strong' | 'medium' | 'low' | 'skip'
+          ev      : 0.12 | None
+          reason  : str   (phrase courte expl1iquant le choix)
+        }
+    """
+    hw = probs.get("home_win", 0)
+    d  = probs.get("draw",     0)
+    aw = probs.get("away_win", 0)
+
+    home = match.get("home_team", "Domicile")
+    away = match.get("away_team", "Extérieur")
+
+    outcome_labels = {
+        "home_win": f"🏠 {home}",
+        "draw":     "🤝 Nul",
+        "away_win": f"✈️ {away}",
+    }
+    probs_map = {"home_win": hw, "draw": d, "away_win": aw}
+
+    # Cas 1 : avec cotes — on cherche la meilleure EV positive
+    if odds:
+        from models.football import FootballModel
+        evs = {}
+        for k in ("home_win", "draw", "away_win"):
+            p = probs_map[k]
+            o = odds.get(k, 0)
+            if o > 0:
+                evs[k] = round(p * o - 1, 3)
+        best_k = max(evs, key=evs.get) if evs else None
+        best_ev = evs.get(best_k, 0) if best_k else 0
+
+        if best_k and best_ev > 0:
+            conf = probs_map[best_k]
+            level = "strong" if best_ev > 0.08 else "medium" if best_ev > 0.03 else "low"
+            return {
+                "outcome": best_k,
+                "label":   outcome_labels[best_k],
+                "conf":    conf,
+                "level":   level,
+                "ev":      best_ev,
+                "reason":  f"Cote {odds.get(best_k, 0):.2f} — EV +{round(best_ev*100,1)}%",
+            }
+
+    # Cas 2 : sans cotes — plus forte probabilité
+    best_k = max(probs_map, key=probs_map.get)
+    conf   = probs_map[best_k]
+
+    # Pour le basket, on ignore le nul
+    if sport == "basketball" and best_k == "draw":
+        probs_map["draw"] = 0
+        best_k = max(probs_map, key=probs_map.get)
+        conf   = probs_map[best_k]
+
+    if conf < 0.33:
+        return {"outcome": "skip", "label": "➖ Passer ce match",
+                "conf": conf, "level": "skip", "ev": None,
+                "reason": "Trop incertain, éviter"}
+
+    level  = "strong" if conf >= 0.60 else "medium" if conf >= 0.45 else "low"
+    reason_map = {
+        "strong": "Favori net, probabilité élevée",
+        "medium":  "Légère domination modèle",
+        "low":    "Marché incertain, mise modérée",
+    }
+    return {
+        "outcome": best_k,
+        "label":   outcome_labels[best_k],
+        "conf":    conf,
+        "level":   level,
+        "ev":      None,
+        "reason":  reason_map[level],
+    }
+
+
+def render_recommendation(reco: dict):
+    """Affiche la bannière hero de recommandation sous la carte match."""
+    level   = reco["level"]
+    label   = reco["label"]
+    conf    = round(reco["conf"] * 100, 1)
+    reason  = reco["reason"]
+    ev_part = f" · EV <strong>+{round(reco['ev']*100,1)}%</strong>" if reco.get("ev") else ""
+
+    icon_map = {"strong": "🔥", "medium": "✅", "low": "⚠️", "skip": "⏸️"}
+    icon = icon_map.get(level, "🔵")
+
+    verb = "PASSER" if level == "skip" else "MISER SUR"
+
+    st.markdown(f"""
+    <div class="reco-banner reco-{level}">
+      <div class="reco-title">{icon} {verb} {label}</div>
+      <div class="reco-sub">{conf}% confiance{ev_part} · {reason}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_probability_bar(probs: dict, show_draw: bool = True):
+    """Barres de probabilités avec étiquettes colorées distinctes."""
+    hw = probs.get("home_win", 0)
+    d  = probs.get("draw", 0) if show_draw else 0
+    aw = probs.get("away_win", 0)
+
+    total = max(hw + d + aw, 0.001)
+    hw_pct = round(hw * 100, 1)
+    d_pct  = round(d  * 100, 1)
+    aw_pct = round(aw * 100, 1)
+    hw_w   = round(hw / total * 100, 1)
+    d_w    = round(d  / total * 100, 1)
+    aw_w   = round(aw / total * 100, 1)
+
+    draw_label   = f'<span class="prob-label-draw">{d_pct}% N</span>' if show_draw else ''
+    draw_segment = f'<div class="prob-segment prob-draw" style="width:{d_w}%"></div>' if show_draw else ''
+
+    st.markdown(f"""
+    <div class="prob-bar-container">
+      <div class="prob-labels">
+        <span class="prob-label-home">🏠 {hw_pct}%</span>
+        {draw_label}
+        <span class="prob-label-away">{aw_pct}% ✈️</span>
+      </div>
+      <div class="prob-bar-wrapper">
+        <div class="prob-segment prob-home" style="width:{hw_w}%"></div>
+        {draw_segment}
+        <div class="prob-segment prob-away" style="width:{aw_w}%"></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_match_card(match: dict, probs: dict, sport: str):
+    """Affiche une carte de match complète."""
+    is_live = match.get("status") in ("IN_PLAY", "PAUSED") or (
+        match.get("sport") == "basketball" and match.get("period", 0) > 0
+        and match.get("status") not in ("Final", "FINISHED")
+    )
+
+    home_score = match.get("home_score")
+    away_score = match.get("away_score")
+
+    # Score affichage
+    if home_score is not None and away_score is not None:
+        score_display = f"{home_score} – {away_score}"
+    else:
+        score_display = "vs"
+
+    # Minute / période
+    if sport == "football":
+        minute_display = f"{match.get('minute', '?')}'" if is_live else "⏰"
+    else:
+        period = match.get("period", 0)
+        time_str = match.get("time", "")
+        if period > 0:
+            minute_display = f"Q{period} {time_str}" if time_str else f"Q{period}"
+        else:
+            minute_display = "⏰"
+
+    live_badge = '<span class="live-badge"><span class="live-dot"></span>LIVE</span>' if is_live else ""
+    card_class = "match-card live" if is_live else "match-card"
+
+    # Cartons rouges
+    red_home = "🟥" * match.get("red_cards_home", 0)
+    red_away = "🟥" * match.get("red_cards_away", 0)
+
+    # Méta-info
+    competition = match.get("competition", "")
+    match_date  = match.get("match_date", "")
+    model_type  = probs.get("model", "?")
+    elo_info    = ""
+    if "home_elo" in probs:
+        elo_info = f"Elo: {int(probs['home_elo'])} / {int(probs['away_elo'])}"
+
+    st.markdown(f"""
+    <div class="{card_class}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.8rem;">
+        <div style="font-size:0.78rem;color:var(--text-secondary);">
+          {competition}
+        </div>
+        {live_badge}
+      </div>
+
+      <div class="teams-row">
+        <span class="team-name home">{match.get('home_team','?')} {red_home}</span>
+        <div class="score-box">
+          <div class="score-text">{score_display}</div>
+          <div class="score-minute">{minute_display}</div>
+        </div>
+        <span class="team-name away">{red_away} {match.get('away_team','?')}</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Barres de probabilités (hors du HTML pour Streamlit)
+    show_draw = (sport == "football")
+    render_probability_bar(probs, show_draw=show_draw)
+
+    # ── Recommandation pronostic ──
+    reco = get_recommendation(probs, sport, match)
+    render_recommendation(reco)
+
+    # Top scores les plus probables (Dixon-Coles)
+    top_scores = probs.get("top_scores", [])
+    if top_scores:
+        scores_html = " ".join(
+            f'<span class="meta-tag" style="font-weight:600;">{s["score"]} ({s["prob"]}%)</span>'
+            for s in top_scores[:3]
+        )
+        st.markdown(f'<div class="match-meta">🎯 Scores probables: {scores_html}</div>', unsafe_allow_html=True)
+
+    # Méta info supplémentaire
+    if elo_info or model_type:
+        st.markdown(f"""
+        <div class="match-meta">
+          <span class="meta-tag">🤖 {model_type}</span>
+          {f'<span class="meta-tag">📊 {elo_info}</span>' if elo_info else ''}
+          {f'<span class="meta-tag">📅 {match_date}</span>' if match_date else ''}
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+
+def build_probability_chart(history: list[dict], home_team: str, away_team: str, sport: str):
+    """
+    Crée un graphique Plotly de l'évolution des probabilités dans le temps.
+    history : liste de dicts {minute/time, home_win, draw, away_win}
+    """
+    if not history:
+        return None
+
+    df = pd.DataFrame(history)
+    x_col = "minute" if sport == "football" else "time_elapsed"
+
+    if x_col not in df.columns:
+        return None
+
+    fig = go.Figure()
+
+    # Probabilité home win
+    fig.add_trace(go.Scatter(
+        x=df[x_col], y=(df["home_win"] * 100).round(1),
+        mode="lines+markers",
+        name=f"🏠 {home_team}",
+        line=dict(color="#58a6ff", width=2.5),
+        marker=dict(size=4),
+        fill="tozeroy",
+        fillcolor="rgba(88,166,255,0.08)",
+        hovertemplate=f"{home_team}: %{{y:.1f}}%<extra></extra>",
+    ))
+
+    # Probabilité draw (football uniquement)
+    if sport == "football" and "draw" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df[x_col], y=(df["draw"] * 100).round(1),
+            mode="lines",
+            name="🤝 Nul",
+            line=dict(color="#e3b341", width=2, dash="dot"),
+            hovertemplate="Nul: %{y:.1f}%<extra></extra>",
+        ))
+
+    # Probabilité away win
+    fig.add_trace(go.Scatter(
+        x=df[x_col], y=(df["away_win"] * 100).round(1),
+        mode="lines+markers",
+        name=f"✈️ {away_team}",
+        line=dict(color="#f78166", width=2.5),
+        marker=dict(size=4),
+        fill="tozeroy",
+        fillcolor="rgba(247,129,102,0.08)",
+        hovertemplate=f"{away_team}: %{{y:.1f}}%<extra></extra>",
+    ))
+
+    # Ligne 50%
+    fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.15)", line_width=1)
+
+    # Style du graphique
+    xlabel = "Minute" if sport == "football" else "Temps écoulé (min)"
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(22,27,34,0.8)",
+        font=dict(family="Inter", color="#8b949e", size=12),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#f0f6fc"),
+        ),
+        margin=dict(l=10, r=10, t=40, b=10),
+        height=280,
+        xaxis=dict(
+            title=xlabel, gridcolor="rgba(48,54,61,0.5)",
+            showgrid=True, zeroline=False,
+            title_font=dict(color="#8b949e"),
+        ),
+        yaxis=dict(
+            title="Probabilité (%)", gridcolor="rgba(48,54,61,0.5)",
+            showgrid=True, zeroline=False, range=[0, 100],
+            title_font=dict(color="#8b949e"),
+        ),
+        hoverlabel=dict(bgcolor="var(--bg-card)", font_color="#f0f6fc"),
+    )
+
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Logique principale
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Les clients API ne sont PAS mis en cache (pour éviter de figer les méthodes).
+# Les modèles Elo SONT mis en cache car leur entraînement est coûteux.
+
+def get_football_client() -> FootballClient:
+    return FootballClient()
+
+
+def get_basketball_client() -> BasketballClient:
+    return BasketballClient()
+
+
+def get_odds_client() -> OddsClient:
+    return OddsClient()
+
+
+@st.cache_resource(show_spinner=False)
+def get_football_model() -> FootballModel:
+    """Instancie et entraîne le modèle football sur l'historique en DB."""
+    model = FootballModel()
+    history = get_history_from_db("football", limit=500)
+    if history:
+        model.train(history)
+    return model
+
+
+@st.cache_resource(show_spinner=False)
+def get_basketball_model() -> BasketballModel:
+    """Instancie et entraîne le modèle basketball sur l'historique en DB."""
+    model = BasketballModel()
+    history = get_history_from_db("basketball", limit=500)
+    if history:
+        model.train(history)
+    return model
+
+
+def render_sidebar():
+    """Panneau latéral : statut des APIs et contrôles."""
+    with st.sidebar:
+        st.markdown("## ⚙️ Paramètres")
+
+        # Sélection de la devise
+        st.markdown("### 💱 Devise & Bookmaker")
+        selected_currency = st.selectbox(
+            "Devise pour les mises",
+            options=["FCFA", "EUR (€)", "USD ($)"],
+            index=0,  # FCFA par défaut pour Congobet
+            key="app_currency",
+            help="Adapte la bankroll, les paliers et les calculs de mises Kelly (ex: FCFA pour Congobet)."
+        )
+        if selected_currency == "FCFA":
+            st.caption("🇨🇬 Adapté pour **Congobet** (mises en FCFA entiers)")
+
+        st.markdown("---")
+
+        # Compétitions suivies
+        st.markdown("### 🏆 Compétitions Football")
+        st.markdown(
+            "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Premier League** (PL)\n"
+            "- 🇪🇸 **La Liga** (PD)\n"
+            "- 🇫🇷 **Ligue 1** (FL1)\n"
+            "- 🇩🇪 **Bundesliga** (BL1)\n"
+            "- 🇮🇹 **Serie A** (SA)\n"
+            "- ⭐ **Champions League** (CL)\n"
+            "- 🏆 **Coupe du Monde** (WC)\n"
+            "- 🌍 **CAN** (CAF)"
+        )
+
+        st.markdown("---")
+
+        # Statut des clés API
+        import os
+        football_key = bool(os.getenv("FOOTBALL_DATA_API_KEY"))
+        odds_key     = bool(os.getenv("ODDS_API_KEY"))
+        bball_key    = os.getenv("BALLDONTLIE_API_KEY", "")
+
+        st.markdown("### 🔑 Statut des APIs")
+        st.markdown(
+            f"{'✅' if football_key else '❌'} **football-data.org** "
+            f"{'(clé configurée)' if football_key else '(clé manquante)'}"
+        )
+        st.markdown(
+            f"{'✅' if odds_key else '⚠️'} **The Odds API** "
+            f"{'(cotes actives)' if odds_key else '(optionnelle — EV désactivé)'}"
+        )
+        st.markdown(
+            f"{'✅' if bball_key else '⚠️'} **balldontlie** "
+            f"{'(clé configurée)' if bball_key else '(clé optionnelle)'}"
+        )
+
+        st.markdown("---")
+
+        # Bouton vider le cache modèles
+        if st.button("🗑️ Vider le cache modèles", use_container_width=True):
+            st.cache_resource.clear()
+            st.success("Cache vidé — modèles rechargés au prochain rafraîchissement.")
+
+        st.markdown("---")
+        st.markdown(
+            "<small style='color:#8b949e'>Modèles : Elo + Dixon-Coles (foot) "
+            "· Elo + Loi normale (basket)<br>"
+            "Sources : football-data.org · balldontlie · The Odds API</small>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_football_tab():
+    """Affiche le contenu de l'onglet Football."""
+    client = get_football_client()
+    model  = get_football_model()
+
+    with st.spinner("⚽ Chargement des matchs de football..."):
+        matches = client.get_today_matches()
+
+    if not matches:
+        st.markdown("""
+        <div class="empty-state">
+          <div class="empty-icon">⚽</div>
+          <div class="empty-text">Aucun match de football aujourd'hui<br>
+          <small style="color:#8b949e">Vérifiez votre clé API football-data.org dans le fichier .env</small>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Trier : LIVE en premier, puis SCHEDULED, puis FINISHED
+    status_order = {"IN_PLAY": 0, "PAUSED": 1, "SCHEDULED": 2, "FINISHED": 3}
+    matches = sorted(matches, key=lambda m: status_order.get(m.get("status", ""), 99))
+
+    # Filtres
+    col_filter1, col_filter2 = st.columns([1, 2])
+    with col_filter1:
+        show_finished = st.checkbox("Afficher les matchs terminés", value=False, key="foot_finished")
+    with col_filter2:
+        available_comps = sorted(list({m.get("competition", "") for m in matches if m.get("competition")}))
+        selected_comp = st.selectbox(
+            "🏆 Filtrer par compétition",
+            options=["Toutes les compétitions"] + available_comps,
+            index=0,
+            key="foot_comp_filter"
+        )
+
+    if selected_comp != "Toutes les compétitions":
+        matches = [m for m in matches if m.get("competition") == selected_comp]
+
+    live_matches = [m for m in matches if m.get("status") in ("IN_PLAY", "PAUSED")]
+    scheduled    = [m for m in matches if m.get("status") == "SCHEDULED"]
+    finished     = [m for m in matches if m.get("status") == "FINISHED"]
+
+    # Métriques rapides
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔴 En direct", len(live_matches))
+    c2.metric("🕐 Programmés", len(scheduled))
+    c3.metric("✅ Terminés", len(finished))
+    c4.metric("📋 Total", len(matches))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Affichage des matchs
+    display_matches = live_matches + scheduled
+    if show_finished:
+        display_matches += finished
+
+    if not display_matches:
+        st.info("Aucun match à afficher avec les filtres actuels.")
+        return
+
+    # Deux colonnes pour les cartes
+    cols = st.columns(2, gap="medium")
+
+    for i, match in enumerate(display_matches):
+        with cols[i % 2]:
+            probs = model.predict(match)
+
+            # Sauvegarde des prédictions pour analyse
+            try:
+                save_prediction(str(match["id"]), "football", match.get("minute"), probs)
+            except Exception:
+                pass
+
+            render_match_card(match, probs, sport="football")
+
+            # Graphique d'évolution (uniquement pour les matchs en cours)
+            if match.get("status") in ("IN_PLAY", "PAUSED"):
+                history = st.session_state.get(f"history_foot_{match['id']}", [])
+                history.append({
+                    "minute": match.get("minute", 0),
+                    "home_win": probs.get("home_win", 0),
+                    "draw": probs.get("draw", 0),
+                    "away_win": probs.get("away_win", 0),
+                })
+                st.session_state[f"history_foot_{match['id']}"] = history[-30:]
+
+                if len(history) > 1:
+                    fig = build_probability_chart(
+                        history,
+                        match.get("home_team", ""),
+                        match.get("away_team", ""),
+                        sport="football",
+                    )
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True, key=f"chart_foot_{match['id']}")
+
+
+def render_basketball_tab():
+    """Affiche le contenu de l'onglet Basketball."""
+    client = get_basketball_client()
+    model  = get_basketball_model()
+
+    with st.spinner("🏀 Chargement des matchs NBA..."):
+        matches = client.get_today_matches()
+
+    if not matches:
+        st.markdown("""
+        <div class="empty-state">
+          <div class="empty-icon">🏀</div>
+          <div class="empty-text">Aucun match NBA aujourd'hui<br>
+          <small style="color:#8b949e">L'API balldontlie ne nécessite pas de clé API (plan gratuit).<br>
+          Vérifiez votre connexion internet.</small>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Trier les matchs
+    def bask_order(m):
+        s = m.get("status", "")
+        if s not in ("Final", ""):
+            return 0   # En cours
+        if s == "":
+            return 1   # À venir
+        return 2       # Terminé
+
+    matches = sorted(matches, key=bask_order)
+
+    live_matches = [m for m in matches if m.get("status") not in ("Final", "", None) and m.get("period", 0) > 0]
+    scheduled    = [m for m in matches if not m.get("period") and m.get("status") not in ("Final",)]
+    finished     = [m for m in matches if m.get("status") == "Final"]
+
+    # Filtre
+    show_finished = st.checkbox("Afficher les matchs terminés", value=False, key="bask_finished")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔴 En direct", len(live_matches))
+    c2.metric("🕐 Programmés", len(scheduled))
+    c3.metric("✅ Terminés", len(finished))
+    c4.metric("📋 Total", len(matches))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    display_matches = live_matches + scheduled
+    if show_finished:
+        display_matches += finished
+
+    if not display_matches:
+        st.info("Aucun match à afficher.")
+        return
+
+    cols = st.columns(2, gap="medium")
+
+    for i, match in enumerate(display_matches):
+        with cols[i % 2]:
+            probs = model.predict(match)
+
+            try:
+                save_prediction(str(match["id"]), "basketball", None, probs)
+            except Exception:
+                pass
+
+            render_match_card(match, probs, sport="basketball")
+
+            # Graphique d'évolution pour les matchs en cours
+            if match.get("period", 0) > 0 and match.get("status") != "Final":
+                time_elapsed = TOTAL_GAME_MINUTES - match.get("time_remaining_secs", 0) / 60
+                history = st.session_state.get(f"history_bask_{match['id']}", [])
+                history.append({
+                    "time_elapsed": round(time_elapsed, 1),
+                    "home_win": probs.get("home_win", 0),
+                    "draw": 0,
+                    "away_win": probs.get("away_win", 0),
+                })
+                st.session_state[f"history_bask_{match['id']}"] = history[-30:]
+
+                if len(history) > 1:
+                    fig = build_probability_chart(
+                        history,
+                        match.get("home_team", ""),
+                        match.get("away_team", ""),
+                        sport="basketball",
+                    )
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True, key=f"chart_bask_{match['id']}")
+
+
+TOTAL_GAME_MINUTES = 48  # Durée NBA
+
+
+def format_currency(amount: float | int, currency: str = "FCFA") -> str:
+    """Formate un montant selon la devise choisie (FCFA, EUR, USD)."""
+    if currency == "FCFA":
+        val = int(round(amount))
+        return f"{val:,} FCFA".replace(",", " ")
+    elif currency == "USD ($)":
+        return f"${amount:,.2f}"
+    else:  # EUR (€)
+        return f"{amount:,.2f} €".replace(",", " ")
+
+
+def kelly_fraction(prob: float, odds: float, fraction: float = 0.25) -> float:
+    """
+    Calcule la fraction de bankroll à miser selon le critère de Kelly.
+    Utilise une fraction réduite (0.25 = quart-Kelly) pour limiter le risque.
+
+    Formule : f = (p × o - 1) / (o - 1)
+    Quart-Kelly : f_q = f × fraction
+
+    Args:
+        prob   : probabilité modèle (0-1)
+        odds   : cote décimale bookmaker
+        fraction: réducteur de risque (0.25 = quart-Kelly recommandé)
+
+    Returns:
+        Fraction de bankroll en % (0-100), ou 0 si mise déconseillée.
+    """
+    if odds <= 1 or prob <= 0:
+        return 0.0
+    ev = prob * odds - 1
+    if ev <= 0:
+        return 0.0
+    kelly = ev / (odds - 1)
+    return round(min(kelly * fraction * 100, 25.0), 1)  # Plafond 25% de bankroll
+
+
+def render_value_bets_tab():
+    """
+    Onglet Value Bets : liste uniquement les matchs à EV positif,
+    triés par valeur décroissante, avec mise Kelly conseillée.
+    """
+    client  = get_football_client()
+    model   = get_football_model()
+    odds_cl = get_odds_client()
+
+    currency = st.session_state.get("app_currency", "FCFA")
+
+    if not odds_cl._is_available():
+        st.markdown("""
+        <div class="empty-state">
+          <div class="empty-icon">💰</div>
+          <div class="empty-text">Clé API Odds manquante<br>
+          <small style="color:#8b949e">Ajoutez <code>ODDS_API_KEY</code> dans .env<br>
+          Inscription gratuite sur <strong>the-odds-api.com</strong> (500 req/mois)</small>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Contrôles de bankroll & EV minimale
+    c_ctrl1, c_ctrl2 = st.columns([1, 1])
+    with c_ctrl1:
+        if currency == "FCFA":
+            bankroll = st.number_input(
+                "💳 Bankroll disponible (FCFA)",
+                min_value=500, max_value=50000000, value=50000, step=5000,
+                help="Montant total disponible sur votre compte Congobet en FCFA"
+            )
+        else:
+            bankroll = st.number_input(
+                f"💳 Bankroll disponible ({currency})",
+                min_value=10, max_value=200000, value=500, step=50,
+                help="Montant total disponible pour calculer les mises Kelly"
+            )
+
+    with c_ctrl2:
+        min_ev = st.slider(
+            "🎯 EV minimale (%)", min_value=1, max_value=20, value=3,
+            help="Afficher seulement les matchs avec une valeur espérée > ce seuil"
+        ) / 100
+
+    # ── Calculateur rapide de cote Congobet ────────────────────────────────
+    with st.expander("🧮 Calculateur de Value Bet Congobet (manuel)", expanded=False):
+        st.markdown(
+            "<small style='color:#8b949e'>Testez une cote vue sur <strong>Congobet</strong> pour "
+            "calculer instantanément la valeur espérée (EV) et la mise conseillée en FCFA.</small>",
+            unsafe_allow_html=True
+        )
+        cc1, cc2, cc3 = st.columns([1, 1, 1.2])
+        with cc1:
+            p_manual = st.number_input(
+                "Probabilité estimée (%)", min_value=1.0, max_value=99.0, value=55.0, step=1.0,
+                key="calc_manual_prob"
+            ) / 100
+        with cc2:
+            cote_manual = st.number_input(
+                "Cote sur Congobet", min_value=1.01, max_value=100.0, value=2.10, step=0.05,
+                key="calc_manual_odd"
+            )
+        with cc3:
+            ev_manual = (p_manual * cote_manual) - 1
+            k_pct_manual = kelly_fraction(p_manual, cote_manual)
+            raw_k = bankroll * k_pct_manual / 100
+            if currency == "FCFA":
+                m_stake = int(round(raw_k / 50.0) * 50) if raw_k >= 100 else int(round(raw_k))
+            else:
+                m_stake = round(raw_k, 2)
+            stake_display = format_currency(m_stake, currency)
+
+            if ev_manual > 0:
+                color_ev = "#39d353"
+                advice = f"✅ <strong>Value Bet !</strong> Mise conseillée : <strong style='color:#e3b341;'>{stake_display}</strong> ({k_pct_manual}% bankroll)"
+            else:
+                color_ev = "#ff4757"
+                advice = "❌ <strong>Pas de value</strong> (EV négative). Éviter de miser."
+
+            st.markdown(f"""
+            <div style="background:#161b22;padding:0.7rem 0.9rem;border-radius:8px;border:1px solid #30363d;margin-top:0.3rem;">
+              <div style="font-size:0.8rem;color:#8b949e">Valeur espérée (EV) : <strong style="color:{color_ev};">{'+' if ev_manual > 0 else ''}{ev_manual*100:.1f}%</strong></div>
+              <div style="font-size:0.82rem;color:#c9d1d9;margin-top:0.3rem;">{advice}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.spinner("📊 Analyse des cotes et calcul des EV..."):
+        week_matches = client.get_week_matches(days=7)
+        odds_by_comp = odds_cl.get_football_odds()
+        all_odds_flat = [ev for evs in odds_by_comp.values() for ev in evs]
+
+    value_bets = []
+    for match in week_matches:
+        if match.get("status") == "FINISHED":
+            continue
+        probs = model.predict(match)
+        matched_odds = odds_cl.match_odds_to_match(match, all_odds_flat)
+        if not matched_odds:
+            continue
+        best_odds = matched_odds.get("best_odds", {})
+        ev_dict = model.compute_ev(probs, best_odds)
+
+        for outcome in ("home_win", "draw", "away_win"):
+            ev_val = ev_dict.get(outcome)
+            odd_val = best_odds.get(outcome, 0)
+            prob_val = probs.get(outcome, 0)
+            if ev_val and ev_val >= min_ev and odd_val > 0:
+                kelly_pct = kelly_fraction(prob_val, odd_val)
+                raw_stake = bankroll * kelly_pct / 100
+                if currency == "FCFA":
+                    # Arrondi au multiple de 50 FCFA le plus proche (mise min usuelle 100 FCFA)
+                    stake_val = int(round(raw_stake / 50.0) * 50) if raw_stake >= 100 else int(round(raw_stake))
+                else:
+                    stake_val = round(raw_stake, 2)
+
+                outcome_label = {
+                    "home_win": f"🏠 {match.get('home_team','?')}",
+                    "draw":     "🤝 Nul",
+                    "away_win": f"✈️ {match.get('away_team','?')}",
+                }[outcome]
+                value_bets.append({
+                    "match":        f"{match.get('home_team','?')} vs {match.get('away_team','?')}",
+                    "competition":  match.get("competition", ""),
+                    "date":         match.get("match_date", ""),
+                    "outcome":      outcome,
+                    "pick":         outcome_label,
+                    "ev":           ev_val,
+                    "odd":          odd_val,
+                    "prob":         prob_val,
+                    "kelly_pct":    kelly_pct,
+                    "stake":        stake_val,
+                })
+
+    # Tri par EV décroissante
+    value_bets.sort(key=lambda x: x["ev"], reverse=True)
+
+    # KPIs
+    n_vb = len(value_bets)
+    avg_ev = round(sum(v["ev"] for v in value_bets) / n_vb * 100, 1) if value_bets else 0
+    total_kelly = sum(v["stake"] for v in value_bets)
+    total_kelly_str = format_currency(total_kelly, currency)
+    bankroll_str = format_currency(bankroll, currency)
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:#39d353">{n_vb}</div>
+      <div class="stat-label">Value bets détectés</div>
+    </div>""", unsafe_allow_html=True)
+    c2.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:#58a6ff">+{avg_ev}%</div>
+      <div class="stat-label">EV moyenne</div>
+    </div>""", unsafe_allow_html=True)
+    c3.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:#e3b341">{total_kelly_str}</div>
+      <div class="stat-label">Total mises Kelly ({currency})</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if not value_bets:
+        st.info(f"🔍 Aucun value bet avec EV > {min_ev*100:.0f}% cette semaine. Essayez un seuil plus bas.")
+        return
+
+    st.markdown(f"### 🔥 {n_vb} Value Bet{'s' if n_vb > 1 else ''} détecté{'' if n_vb == 1 else 's'}")
+
+    for i, vb in enumerate(value_bets):
+        is_top = i == 0
+        ev_pct  = round(vb["ev"] * 100, 1)
+        prob_pct = round(vb["prob"] * 100, 1)
+        stake_str = format_currency(vb["stake"], currency)
+        kelly_str = (
+            f"Mise conseillée : <strong style='color:#e3b341'>"
+            f"{vb['kelly_pct']}% → {stake_str}</strong> "
+            f"(quart-Kelly sur {bankroll_str})"
+            if vb["kelly_pct"] > 0 else "Mise non conseillée"
+        )
+        st.markdown(f"""
+        <div class="vb-row {'top' if is_top else ''}">
+          <div class="vb-ev">+{ev_pct}%</div>
+          <div class="vb-teams">
+            <div class="vb-match">{vb['match']}</div>
+            <div class="vb-comp">{vb['competition']} · {vb['date']}</div>
+            <div class="vb-pick">🎯 Miser sur : {vb['pick']} @ {vb['odd']:.2f}</div>
+            <div class="vb-kelly">{kelly_str}</div>
+          </div>
+          <div style="text-align:right;min-width:80px;">
+            <div style="color:#8b949e;font-size:0.72rem;">Prob modèle</div>
+            <div style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">{prob_pct}%</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown(
+        "<small style='color:#8b949e'>⚠️ Le critère de Kelly est théorique. "
+        "Utilisez le quart-Kelly pour réduire le risque de ruine. "
+        "Ces calculs sont indicatifs et ne constituent pas un conseil en paris.</small>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_calendar_tab():
+    """
+    Onglet Calendrier : vue hebdomadaire avec cases cliquables.
+    Code couleur : vert = value bet, bleu = match normal, gris = peu de matchs.
+    La case sélectionnée affiche les matchs du jour en dessous.
+    """
+    from datetime import date, timedelta
+    from collections import defaultdict
+
+    client  = get_football_client()
+    model   = get_football_model()
+    odds_cl = get_odds_client()
+    odds_available = odds_cl._is_available()
+
+    # Navigation semaine
+    today = date.today()
+    if "cal_week_offset" not in st.session_state:
+        st.session_state["cal_week_offset"] = 0
+    offset = st.session_state["cal_week_offset"]
+    week_start = today - timedelta(days=today.weekday()) + timedelta(weeks=offset)
+    week_end   = week_start + timedelta(days=6)
+
+    nav_col1, nav_col2, nav_col3 = st.columns([1, 3, 1])
+    with nav_col1:
+        if st.button("← Semaine préc.", use_container_width=True):
+            st.session_state["cal_week_offset"] -= 1
+            st.rerun()
+    with nav_col2:
+        st.markdown(
+            f"<h4 style='text-align:center;margin:0;'>"
+            f"{week_start.strftime('%d %b')} — {week_end.strftime('%d %b %Y')}"
+            f"</h4>",
+            unsafe_allow_html=True,
+        )
+    with nav_col3:
+        if st.button("Semaine suiv. →", use_container_width=True):
+            st.session_state["cal_week_offset"] += 1
+            st.rerun()
+
+    # Charger les matchs de la période
+    with st.spinner("📅 Chargement du calendrier..."):
+        all_matches = client.get_week_matches(days=14)  # 2 semaines de tampon
+
+    # Récupérer les cotes si dispo
+    all_odds_flat = []
+    if odds_available:
+        odds_by_comp = odds_cl.get_football_odds()
+        all_odds_flat = [ev for evs in odds_by_comp.values() for ev in evs]
+
+    # Indexer les matchs par date
+    matches_by_date = defaultdict(list)
+    for m in all_matches:
+        d_str = m.get("match_date", "")[:10]
+        try:
+            d = date.fromisoformat(d_str)
+            if week_start <= d <= week_end:
+                matches_by_date[d_str].append(m)
+        except ValueError:
+            pass
+
+    # Pré-calcul EV par date pour le code couleur
+    ev_by_date = {}
+    for d_str, day_matches in matches_by_date.items():
+        best_ev = 0
+        for m in day_matches:
+            if m.get("status") == "FINISHED":
+                continue
+            probs = model.predict(m)
+            if all_odds_flat:
+                mo = odds_cl.match_odds_to_match(m, all_odds_flat)
+                if mo:
+                    ev_d = model.compute_ev(probs, mo.get("best_odds", {}))
+                    best_ev = max(best_ev, ev_d.get("best_ev") or 0)
+        ev_by_date[d_str] = best_ev
+
+    # ── Grille calendrier ─────────────────────────────────────────────────
+    days_fr = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+    header_html = "".join(f'<div class="cal-day-header">{d}</div>' for d in days_fr)
+
+    cells_html = ""
+    selected_date = st.session_state.get("cal_selected_date")
+
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        d_str = d.isoformat()
+        day_matches_list = matches_by_date.get(d_str, [])
+        n_matches = len(day_matches_list)
+        best_ev = ev_by_date.get(d_str, 0)
+
+        is_today = (d == today)
+        has_value = best_ev > 0.03
+        cell_class = "cal-cell today" if is_today else ("cal-cell has-value" if has_value else "cal-cell")
+
+        # Badges matchs
+        badges = ""
+        for m in day_matches_list[:3]:
+            home = m.get("home_team", "")[:8]
+            away = m.get("away_team", "")[:8]
+            badge_class = "cal-badge value" if has_value else "cal-badge normal"
+            badges += f'<div class="{badge_class}">{home} v {away}</div>'
+        if n_matches > 3:
+            badges += f'<div class="cal-badge low">+{n_matches-3} matchs</div>'
+
+        ev_indicator = ""
+        if best_ev > 0.03:
+            ev_indicator = f'<div style="color:#39d353;font-size:0.65rem;font-weight:700;">EV +{round(best_ev*100,1)}%</div>'
+
+        cell_style = "cursor:pointer;"
+        cells_html += (
+            f'<div class="{cell_class}" style="{cell_style}">'
+            f'<div class="cal-date">{d.day}</div>'
+            f'{ev_indicator}'
+            f'{badges}'
+            f'</div>'
+        )
+
+
+    st.markdown(
+        f'<div class="cal-grid">{header_html}{cells_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Sélection du jour via selectbox (fallback interactif)
+    st.markdown("<br>", unsafe_allow_html=True)
+    available_dates = sorted(matches_by_date.keys())
+    if not available_dates:
+        st.info("📅 Aucun match trouvé pour cette semaine.")
+        return
+
+    selected = st.selectbox(
+        "📅 Voir les matchs du :",
+        options=available_dates,
+        format_func=lambda d: f"{d} ({len(matches_by_date[d])} matchs)",
+        key="cal_day_select",
+    )
+
+    if selected:
+        st.markdown(f"### 📅 Matchs du {selected}")
+        day_m = matches_by_date[selected]
+        cols = st.columns(2, gap="medium")
+        for i, match in enumerate(day_m):
+            with cols[i % 2]:
+                probs = model.predict(match)
+                render_match_card(match, probs, sport="football")
+                # Cotes + EV si dispo
+                if all_odds_flat:
+                    mo = odds_cl.match_odds_to_match(match, all_odds_flat)
+                    if mo:
+                        odds = mo.get("best_odds", {})
+                        ev = model.compute_ev(probs, odds)
+                        ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
+                            render_ev_badge(ev.get("home_win"), "1"),
+                            render_ev_badge(ev.get("draw"), "X"),
+                            render_ev_badge(ev.get("away_win"), "2"),
+                        ]))
+                        best_ev_val = ev.get("best_ev", 0) or 0
+                        best_k = ev.get("best", "")
+                        kelly_pct = kelly_fraction(
+                            probs.get(best_k, 0),
+                            odds.get(best_k, 0)
+                        ) if best_k else 0
+                        kelly_html = ""
+                        if kelly_pct > 0:
+                            kelly_html = (
+                                f'<span style="color:#e3b341;font-size:0.78rem;">'
+                                f"💰 Kelly: {kelly_pct}% de bankroll</span>"
+                            )
+                        st.markdown(f"""
+                        <div style="margin:-0.5rem 0 0.5rem;font-size:0.82rem;">
+                          EV: {ev_badges}<br>{kelly_html}
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.markdown("---")
+
+
+
+def render_ev_badge(ev_val: float | None, label: str) -> str:
+    """Retourne un badge HTML coloré selon la valeur EV."""
+    if ev_val is None:
+        return ""
+    if ev_val > 0.05:
+        color = "#39d353"  # Vert vif = Value !
+        icon = "🔥"
+    elif ev_val > 0:
+        color = "#58a6ff"  # Bleu = EV légèrement positive
+        icon = "📈"
+    elif ev_val > -0.05:
+        color = "#e3b341"  # Jaune = neutre
+        icon = "➖"
+    else:
+        color = "#f78166"  # Rouge = mauvaise value
+        icon = "📉"
+    pct = round(ev_val * 100, 1)
+    sign = "+" if pct >= 0 else ""
+    return f'<span style="color:{color};font-weight:700;font-size:0.82rem;">{icon} {label}: {sign}{pct}%</span>'
+
+
+def render_week_tab():
+    """
+    Onglet 'Semaine + Cotes' : matchs des 7 prochains jours
+    avec probabilités Dixon-Coles, cotes bookmakers et calcul EV.
+    """
+    client  = get_football_client()
+    model   = get_football_model()
+    odds_cl = get_odds_client()
+
+    with st.spinner("📅 Chargement des matchs de la semaine..."):
+        week_matches = client.get_week_matches(days=7)
+
+    # Récupérer les cotes si l'API Odds est configurée
+    odds_available = odds_cl._is_available()
+    all_odds_flat = []
+    if odds_available:
+        with st.spinner("📊 Récupération des cotes bookmakers..."):
+            odds_by_comp = odds_cl.get_football_odds()
+            for events in odds_by_comp.values():
+                all_odds_flat.extend(events)
+
+    if not week_matches:
+        st.markdown("""
+        <div class="empty-state">
+          <div class="empty-icon">📅</div>
+          <div class="empty-text">Aucun match de football cette semaine<br>
+          <small style="color:#8b949e">Vérifiez votre clé API dans .env</small>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Grouper par date
+    from collections import defaultdict
+    matches_by_date = defaultdict(list)
+    for m in week_matches:
+        d = m.get("match_date", "?")[:10]
+        matches_by_date[d].append(m)
+
+    # Info banner
+    st.markdown(f"""
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <div class="stat-card" style="flex:1;min-width:120px;">
+        <div class="stat-value">{len(week_matches)}</div>
+        <div class="stat-label">Matchs cette semaine</div>
+      </div>
+      <div class="stat-card" style="flex:1;min-width:120px;">
+        <div class="stat-value">{len(matches_by_date)}</div>
+        <div class="stat-label">Jours de match</div>
+      </div>
+      <div class="stat-card" style="flex:1;min-width:120px;">
+        <div class="stat-value">{len(all_odds_flat)}</div>
+        <div class="stat-label">Cotes disponibles</div>
+      </div>
+      <div class="stat-card" style="flex:1;min-width:120px;">
+        <div class="stat-value" style="color:{'#39d353' if odds_available else '#f78166'}">
+          {'✅' if odds_available else '❌'}
+        </div>
+        <div class="stat-label">API Cotes</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not odds_available:
+        st.info(
+            "💡 Pour voir les cotes et la valeur espérée (EV), ajoutez une clé "
+            "ODDS_API_KEY dans .env → Inscrivez-vous gratuitement sur the-odds-api.com"
+        )
+
+    # Filtre de compétition pour la semaine
+    week_comps = sorted(list({m.get("competition", "") for m in week_matches if m.get("competition")}))
+    sel_week_comp = st.selectbox(
+        "🏆 Filtrer par compétition",
+        options=["Toutes les compétitions"] + week_comps,
+        index=0,
+        key="week_comp_filter"
+    )
+    if sel_week_comp != "Toutes les compétitions":
+        filtered_week = [m for m in week_matches if m.get("competition") == sel_week_comp]
+        matches_by_date = defaultdict(list)
+        for m in filtered_week:
+            d = m.get("match_date", "?")[:10]
+            matches_by_date[d].append(m)
+
+    # Affichage par date
+    for match_date in sorted(matches_by_date.keys()):
+        day_matches = matches_by_date[match_date]
+
+        # Header de la journée
+        st.markdown(f"""
+        <div style="margin:1.5rem 0 0.8rem;padding:0.5rem 1rem;background:linear-gradient(90deg,rgba(88,166,255,0.15),transparent);
+                    border-left:3px solid #58a6ff;border-radius:0 8px 8px 0;">
+          <span style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">📅 {match_date}</span>
+          <span style="margin-left:0.8rem;color:#8b949e;font-size:0.85rem;">{len(day_matches)} matchs</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        cols = st.columns(2, gap="medium")
+
+        for i, match in enumerate(day_matches):
+            with cols[i % 2]:
+                probs = model.predict(match)
+                render_match_card(match, probs, sport="football")
+
+                # Chercher les cotes correspondantes et calculer l'EV
+                if all_odds_flat:
+                    matched_odds = odds_cl.match_odds_to_match(match, all_odds_flat)
+                    if matched_odds:
+                        odds = matched_odds.get("best_odds", {})
+                        ev = model.compute_ev(probs, odds)
+
+                        # Affichage cotes + EV
+                        ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
+                            render_ev_badge(ev.get("home_win"), "1"),
+                            render_ev_badge(ev.get("draw"), "X"),
+                            render_ev_badge(ev.get("away_win"), "2"),
+                        ]))
+
+                        best_ev = ev.get("best_ev", 0)
+                        value_alert = ""
+                        if best_ev and best_ev > 0.05:
+                            outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
+                            value_alert = f"""
+                            <div style="background:rgba(57,211,83,0.1);border:1px solid #39d353;
+                                        border-radius:8px;padding:0.5rem 0.8rem;margin-top:0.4rem;text-align:center;">
+                              🔥 <strong style="color:#39d353;">VALUE BET détectée!</strong>
+                              <span style="color:#f0f6fc;font-size:0.85rem;">
+                                {outcome_label.get(ev.get('best'), '?')} @ {odds.get(ev.get('best', ''), 0):.2f}
+                                (EV: +{round(best_ev * 100, 1)}%)
+                              </span>
+                            </div>
+                            """
+
+                        st.markdown(f"""
+                        <div style="margin:-0.5rem 0 0.4rem;">
+                          <div style="font-size:0.78rem;color:#8b949e;margin-bottom:0.3rem;">&#x1F4B0; Meilleures cotes:
+                            <span style="color:#f0f6fc;">1: {odds.get('home_win', 0):.2f}</span> |
+                            <span style="color:#f0f6fc;">X: {odds.get('draw', 0):.2f}</span> |
+                            <span style="color:#f0f6fc;">2: {odds.get('away_win', 0):.2f}</span>
+                            <small style="color:#8b949e;">({matched_odds.get('n_bookmakers', '?')} bookmakers)</small>
+                          </div>
+                          <div style="font-size:0.82rem;">EV: {ev_badges}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # Value alert dans son propre st.markdown (evite conflit triple-quotes)
+                        best_ev = ev.get("best_ev", 0)
+                        if best_ev and best_ev > 0.05:
+                            outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
+                            pick      = outcome_label.get(ev.get("best", ""), "?")
+                            odd_val   = odds.get(ev.get("best", ""), 0)
+                            ev_pct    = round(best_ev * 100, 1)
+                            st.markdown(
+                                f'<div style="background:rgba(45,202,86,0.12);border:1.5px solid #2dca56;'
+                                f'border-radius:12px;padding:0.7rem 1rem;margin-bottom:0.4rem;text-align:center;">'
+                                f'<div style="font-family:Outfit,sans-serif;font-size:1rem;font-weight:800;color:#2dca56;">'
+                                f'\U0001f525 VALUE BET &mdash; Miser sur {pick} @ {odd_val:.2f}</div>'
+                                f'<div style="font-size:0.78rem;color:rgba(45,202,86,0.8);">'
+                                f'EV +{ev_pct}% · {matched_odds.get("n_bookmakers","?")}</div></div>',
+                                unsafe_allow_html=True,
+                            )
+
+                        st.markdown("---")
+
+
+
+def render_performance_tab():
+    """
+    Onglet Performance : évalue la qualité des prédictions passées.
+    - Accuracy globale et par sport
+    - Brier Score (qualité de calibration, plus bas = mieux)
+    - Graphique de calibration : prob prédite vs fréquence observée
+    - Tableau des 20 dernières prédictions avec résultat
+    """
+    from db import get_connection as get_db_connection
+    import numpy as np
+
+    st.markdown("### 📊 Performance du modèle")
+    st.markdown(
+        "<small style='color:#8b949e'>Basé sur les prédictions sauvegardées "
+        "comparées aux résultats réels des matchs terminés.</small>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Récupérer les prédictions loggées ─────────────────────────────────
+    try:
+        conn = get_db_connection()
+        rows = conn.execute("""
+            SELECT p.match_id, p.sport, p.predicted_home_win, p.predicted_draw,
+                   p.predicted_away_win, p.minute,
+                   m.home_score, m.away_score, m.status
+            FROM predictions p
+            LEFT JOIN matches m ON p.match_id = m.match_id
+            WHERE m.status = 'FINISHED'
+              AND m.home_score IS NOT NULL
+              AND m.away_score IS NOT NULL
+            ORDER BY p.id DESC
+            LIMIT 200
+        """).fetchall()
+        conn.close()
+    except Exception as e:
+        st.warning(f"⚠️ Base de données : {e}")
+        rows = []
+
+    if not rows:
+        st.info(
+            "📭 Pas encore de données de performance.\n\n"
+            "Les prédictions sont enregistrées automatiquement au fur et à mesure "
+            "que l'application calcule des pronostics sur des matchs terminés. "
+            "Revenez après quelques sessions !"
+        )
+        # Afficher quand même le guide de lecture
+        st.markdown("---")
+        st.markdown("#### 📖 Comment lire les métriques ?")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("""
+            **Accuracy**
+            Proportion de matchs où le pronostic le plus probable
+            correspond au résultat final.
+            - > 55% → Excellent
+            - 50-55% → Bien
+            - < 50% → À revoir
+            """)
+        with col2:
+            st.markdown("""
+            **Brier Score**
+            Mesure l'erreur quadratique des probabilités (0 = parfait, 1 = pire).
+            - < 0.20 → Excellent
+            - 0.20-0.25 → Bien
+            - > 0.25 → À améliorer
+
+            *Formule : BS = mean((p_outcome - 1_outcome)²)*
+            """)
+        return
+
+    # ── Calcul des métriques ───────────────────────────────────────────────
+    records = []
+    for r in rows:
+        hw = r["predicted_home_win"] or 0
+        d  = r["predicted_draw"]     or 0
+        aw = r["predicted_away_win"] or 0
+        hs = r["home_score"] or 0
+        as_ = r["away_score"] or 0
+
+        if hs > as_:
+            actual = "home_win"
+        elif hs == as_:
+            actual = "draw"
+        else:
+            actual = "away_win"
+
+        pred_outcome = max({"home_win": hw, "draw": d, "away_win": aw},
+                           key=lambda k: {"home_win": hw, "draw": d, "away_win": aw}[k])
+        correct = (pred_outcome == actual)
+
+        # Brier Score pour cet événement (3 issues)
+        brier = (
+            (hw - (1 if actual == "home_win" else 0)) ** 2 +
+            (d  - (1 if actual == "draw"     else 0)) ** 2 +
+            (aw - (1 if actual == "away_win" else 0)) ** 2
+        ) / 3
+
+        records.append({
+            "sport":        r["sport"],
+            "match_id":     r["match_id"],
+            "hw": hw, "d": d, "aw": aw,
+            "actual":       actual,
+            "predicted":    pred_outcome,
+            "correct":      correct,
+            "brier":        brier,
+            "score":        f"{hs}-{as_}",
+        })
+
+    df = pd.DataFrame(records)
+    n  = len(df)
+    accuracy    = round(df["correct"].mean() * 100, 1)
+    brier_score = round(df["brier"].mean(), 3)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    acc_color   = "#39d353" if accuracy > 55 else "#e3b341" if accuracy > 48 else "#f78166"
+    brier_color = "#39d353" if brier_score < 0.20 else "#e3b341" if brier_score < 0.25 else "#f78166"
+    c1.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:{acc_color}">{accuracy}%</div>
+      <div class="stat-label">Accuracy</div>
+    </div>""", unsafe_allow_html=True)
+    c2.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:{brier_color}">{brier_score}</div>
+      <div class="stat-label">Brier Score ↓</div>
+    </div>""", unsafe_allow_html=True)
+    c3.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value">{n}</div>
+      <div class="stat-label">Matchs évalués</div>
+    </div>""", unsafe_allow_html=True)
+    correct_n = int(df["correct"].sum())
+    c4.markdown(f"""
+    <div class="stat-card">
+      <div class="stat-value" style="color:#39d353">{correct_n}</div>
+      <div class="stat-label">Pronostics corrects</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Accuracy par sport ─────────────────────────────────────────────────
+    by_sport = df.groupby("sport")["correct"].agg(["mean", "count"]).reset_index()
+    by_sport.columns = ["Sport", "Accuracy", "Matchs"]
+    by_sport["Accuracy"] = (by_sport["Accuracy"] * 100).round(1)
+
+    col_left, col_right = st.columns([1, 2])
+
+    with col_left:
+        st.markdown("#### 🏅 Par sport")
+        for _, row in by_sport.iterrows():
+            emoji = "⚽" if row["Sport"] == "football" else "🏀"
+            color = "#39d353" if row["Accuracy"] > 55 else "#e3b341" if row["Accuracy"] > 48 else "#f78166"
+            st.markdown(f"""
+            <div style="background:var(--bg-card);border:1px solid var(--border-color);
+                        border-radius:10px;padding:0.8rem 1rem;margin-bottom:0.6rem;">
+              <div style="font-size:1rem;font-weight:700;">{emoji} {row['Sport'].title()}</div>
+              <div style="color:{color};font-size:1.5rem;font-weight:800;">{row['Accuracy']}%</div>
+              <div style="color:#8b949e;font-size:0.75rem;">{int(row['Matchs'])} matchs</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ── Graphique de calibration ───────────────────────────────────────────
+    with col_right:
+        st.markdown("#### 📈 Courbe de calibration")
+        # Bin les probabilités prédites par tranche de 10%
+        all_probs   = []
+        all_actuals = []
+        for _, row in df.iterrows():
+            for outcome, prob_col in [("home_win","hw"),("draw","d"),("away_win","aw")]:
+                all_probs.append(row[prob_col])
+                all_actuals.append(1 if row["actual"] == outcome else 0)
+
+        bins = np.linspace(0, 1, 11)
+        bin_centers, obs_freq = [], []
+        for i in range(len(bins) - 1):
+            mask = [(bins[i] <= p < bins[i+1]) for p in all_probs]
+            if sum(mask) >= 3:
+                bin_centers.append((bins[i] + bins[i+1]) / 2)
+                obs_freq.append(np.mean([all_actuals[j] for j, m in enumerate(mask) if m]))
+
+        fig_cal = go.Figure()
+        # Ligne parfaite
+        fig_cal.add_trace(go.Scatter(
+            x=[0, 1], y=[0, 1],
+            mode="lines", name="Calibration parfaite",
+            line=dict(color="#30363d", dash="dash", width=1.5),
+        ))
+        # Points observés
+        if bin_centers:
+            fig_cal.add_trace(go.Scatter(
+                x=bin_centers, y=obs_freq,
+                mode="lines+markers", name="Modèle",
+                line=dict(color="#58a6ff", width=2.5),
+                marker=dict(size=8, color="#58a6ff"),
+                hovertemplate="Prob prédite: %{x:.0%}<br>Fréq observée: %{y:.0%}<extra></extra>",
+            ))
+        fig_cal.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(22,27,34,0.8)",
+            font=dict(family="Inter", color="#8b949e"),
+            xaxis=dict(title="Probabilité prédite", tickformat=".0%",
+                       gridcolor="rgba(48,54,61,0.5)", range=[0,1]),
+            yaxis=dict(title="Fréquence observée", tickformat=".0%",
+                       gridcolor="rgba(48,54,61,0.5)", range=[0,1]),
+            legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#f0f6fc")),
+            margin=dict(l=10, r=10, t=10, b=10),
+            height=280,
+        )
+        st.plotly_chart(fig_cal, use_container_width=True, key="calibration_chart")
+
+    # ── Tableau des 20 dernières prédictions ──────────────────────────────
+    st.markdown("#### 🗒️ Dernières prédictions")
+    display_df = df.head(20)[["match_id","sport","predicted","actual","correct","score","brier"]].copy()
+    display_df.columns = ["Match ID","Sport","Pronostic","Résultat","✓","Score","Brier"]
+    display_df["✓"] = display_df["✓"].map({True: "✅", False: "❌"})
+    display_df["Pronostic"] = display_df["Pronostic"].map({
+        "home_win": "🏠 Domicile", "draw": "🤝 Nul", "away_win": "✈️ Extérieur"
+    })
+    display_df["Résultat"] = display_df["Résultat"].map({
+        "home_win": "🏠 Domicile", "draw": "🤝 Nul", "away_win": "✈️ Extérieur"
+    })
+    display_df["Brier"] = display_df["Brier"].round(3)
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Interface principale
+# ═══════════════════════════════════════════════════════════════════════════
+
+def main():
+
+    # ── Sidebar ───────────────────────────────────────────────────────────
+    render_sidebar()
+
+    # ── Header ────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="main-header">
+      <h1 class="main-title">🎯 SportsPredikt</h1>
+      <p class="main-subtitle">Pronostics en temps réel • Football & Basketball • Powered by ML</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Avertissement légal ────────────────────────────────────────────────
+    st.markdown("""
+    <div class="warning-banner">
+      ⚠️ <strong>AVERTISSEMENT :</strong> Les probabilités affichées sont <em>indicatives</em>
+      et basées sur des modèles statistiques. <strong>Aucun résultat n'est garanti.</strong>
+      Cette application ne constitue pas un conseil en paris sportifs.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Rafraîchissement automatique ───────────────────────────────────────
+    refresh_col1, refresh_col2, refresh_col3 = st.columns([3, 1, 1])
+    with refresh_col2:
+        auto_refresh = st.toggle("🔄 Auto-refresh", value=True, key="auto_refresh")
+    with refresh_col3:
+        last_update = st.empty()
+        last_update.markdown(
+            f"<small style='color:#8b949e'>Mis à jour: {datetime.now().strftime('%H:%M:%S')}</small>",
+            unsafe_allow_html=True
+        )
+
+    # ── Onglets principaux ─────────────────────────────────────────────────
+    tab_foot, tab_bask, tab_week, tab_vb, tab_cal, tab_perf = st.tabs(
+        ["⚽ Football", "🏀 Basketball",
+         "📅 Semaine", "🔥 Value Bets", "🗓️ Calendrier", "📊 Performance"]
+    )
+
+    with tab_foot:
+        render_football_tab()
+
+    with tab_bask:
+        render_basketball_tab()
+
+    with tab_week:
+        render_week_tab()
+
+    with tab_vb:
+        render_value_bets_tab()
+
+    with tab_cal:
+        render_calendar_tab()
+
+    with tab_perf:
+        render_performance_tab()
+
+    # ── Pied de page ───────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="text-align:center;padding:2rem 0 1rem;color:#8b949e;font-size:0.78rem;border-top:1px solid #30363d;margin-top:2rem;">
+      SportsPredikt v2 &bull; Données: football-data.org &amp; balldontlie &amp; The Odds API &bull;
+      Modèles: Elo + Dixon-Coles (foot), Elo + Loi Normale (basket) &bull; EV = Value espérée<br>
+      <span style="color:#e3b341">⚠️ Probabilités indicatives — Aucun résultat garanti</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Auto-refresh toutes les 30 secondes ────────────────────────────────
+    if auto_refresh:
+        time.sleep(30)
+        st.rerun()
+
+
+if __name__ == "__main__":
+    main()

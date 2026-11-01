@@ -1,0 +1,26 @@
+# Environnement Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Variables d'environnement (SENSIBLE - ne jamais commiter)
+.env
+
+# Base de données SQLite (cache local)
+cache.db
+*.db
+
+# Résultats de backtest
+backtest_results_*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
