@@ -48,113 +48,109 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS premium ────────────────────────────────────────────────────────────
+# ── Styles de l'interface ─────────────────────────────────────────────────
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800;900&display=swap');
-
   /* ════ Variables de design ════ */
   :root {
-    --bg-0:       #080c10;   /* fond app */
-    --bg-1:       #0d1117;   /* fond principal */
-    --bg-2:       #161b22;   /* fond carte */
-    --bg-3:       #1c2128;   /* fond carte hover */
-    --bg-4:       #21262d;   /* fond éléments secondaires */
+    --bg-0:       #101418;
+    --bg-1:       #13181d;
+    --bg-2:       #1a2026;
+    --bg-3:       #20272e;
+    --bg-4:       #273039;
 
-    --green:      #2dca56;
-    --green-dim:  rgba(45,202,86,0.12);
-    --green-border: rgba(45,202,86,0.35);
-    --blue:       #4e9eff;
-    --blue-dim:   rgba(78,158,255,0.10);
-    --blue-border:rgba(78,158,255,0.30);
-    --yellow:     #e3a234;
-    --yellow-dim: rgba(227,162,52,0.10);
-    --yellow-border:rgba(227,162,52,0.30);
-    --red:        #ff4757;
-    --red-dim:    rgba(255,71,87,0.12);
-    --orange:     #ff7043;
-    --purple:     #a78bfa;
+    --green:      #55bd8a;
+    --green-dim:  rgba(85,189,138,0.10);
+    --green-border: rgba(85,189,138,0.28);
+    --blue:       #82b4db;
+    --blue-dim:   rgba(130,180,219,0.10);
+    --blue-border:rgba(130,180,219,0.26);
+    --yellow:     #d9b66f;
+    --yellow-dim: rgba(217,182,111,0.10);
+    --yellow-border:rgba(217,182,111,0.26);
+    --red:        #dc7379;
+    --red-dim:    rgba(220,115,121,0.10);
+    --orange:     #d89472;
+    --purple:     #a99bd1;
 
     --text-0:     #f0f6fc;   /* blanc */
     --text-1:     #c9d1d9;   /* gris clair */
     --text-2:     #8b949e;   /* gris moyen */
     --text-3:     #484f58;   /* gris foncé */
 
-    --border:     #21262d;
-    --radius-sm:  8px;
-    --radius-md:  14px;
-    --radius-lg:  20px;
-    --shadow:     0 4px 24px rgba(0,0,0,0.4);
-    --shadow-green: 0 0 20px rgba(45,202,86,0.20);
+    --border:     #2a333b;
+    --radius-sm:  6px;
+    --radius-md:  10px;
+    --radius-lg:  12px;
+    --shadow:     0 4px 16px rgba(0,0,0,0.18);
+    --shadow-green: none;
   }
 
   /* ════ Reset ════ */
   html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background-color: var(--bg-1);
     color: var(--text-0);
   }
   .stApp { background-color: var(--bg-1); }
-  .block-container { padding-top: 1rem !important; }
+  .block-container { padding-top: 0.7rem !important; }
 
   /* ════ Header ════ */
   .main-header {
-    text-align: center;
-    padding: 2.5rem 0 1.5rem;
+    text-align: left;
+    padding: 0.8rem 0 1rem;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 1.5rem;
+    margin-bottom: 0.8rem;
   }
-  .main-title {
-    font-family: 'Outfit', sans-serif;
-    font-size: 3rem;
-    font-weight: 900;
-    background: linear-gradient(135deg, #4e9eff 0%, #a78bfa 50%, #2dca56 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+  h1.main-title {
+    font-size: 1.8rem !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+    color: var(--text-0);
     margin: 0;
-    letter-spacing: -1px;
+    letter-spacing: -0.5px;
   }
   .main-subtitle {
     color: var(--text-2);
-    font-size: 0.9rem;
-    margin-top: 0.5rem;
+    font-size: 0.82rem;
+    margin-top: 0.25rem;
     font-weight: 400;
-    letter-spacing: 0.3px;
   }
+  .main-header p.main-subtitle { font-size: 0.82rem !important; }
 
   /* ════ Avertissement ════ */
   .warning-banner {
-    background: rgba(227,162,52,0.07);
-    border: 1px solid var(--yellow-border);
-    border-radius: var(--radius-md);
-    padding: 0.7rem 1.2rem;
-    margin-bottom: 1.2rem;
-    text-align: center;
-    color: var(--yellow);
+    background: rgba(217,182,111,0.06);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--yellow);
+    border-radius: var(--radius-sm);
+    padding: 0.55rem 0.8rem;
+    margin-bottom: 0.7rem;
+    text-align: left;
+    color: var(--text-1);
     font-size: 0.8rem;
-    font-weight: 500;
   }
 
   /* ════ Onglets ════ */
   .stTabs [data-baseweb="tab-list"] {
-    gap: 4px;
-    background: var(--bg-2);
-    border-radius: var(--radius-md);
-    padding: 5px;
-    border: 1px solid var(--border);
+    gap: 0.2rem;
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+    padding: 0;
   }
   .stTabs [data-baseweb="tab"] {
-    border-radius: var(--radius-sm);
+    background: transparent;
+    border-radius: 0;
     color: var(--text-2);
-    font-weight: 600;
-    font-size: 0.85rem;
-    padding: 0.45rem 1.1rem;
-    transition: all 0.15s ease;
+    font-weight: 500;
+    font-size: 0.82rem;
+    padding: 0.55rem 0.8rem;
   }
   .stTabs [aria-selected="true"] {
-    background: var(--bg-4) !important;
     color: var(--text-0) !important;
+  }
+  .stTabs [data-baseweb="tab-highlight"] {
+    background-color: var(--green) !important;
   }
 
   /* ════ CARTE MATCH ════ */
@@ -162,33 +158,13 @@ st.markdown("""
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 1.3rem 1.4rem 1rem;
-    margin-bottom: 1rem;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    padding: 1rem 1.1rem 0.8rem;
+    margin-bottom: 0.6rem;
     position: relative;
     overflow: hidden;
   }
-  .match-card::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, var(--blue), var(--purple));
-    opacity: 0.6;
-  }
-  .match-card.live::after {
-    background: linear-gradient(90deg, var(--red), #ff6b6b);
-    animation: shimmer 2s infinite;
-    opacity: 1;
-  }
-  @keyframes shimmer {
-    0%   { background-position: -200% center; }
-    100% { background-position: 200% center; }
-  }
-  .match-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow);
-    border-color: rgba(78,158,255,0.25);
+  .match-card.live {
+    border-color: rgba(220,115,121,0.42);
   }
 
   /* Ligne compétition + badge */
@@ -237,9 +213,8 @@ st.markdown("""
     margin-bottom: 1.1rem;
   }
   .team-name {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.05rem;
-    font-weight: 700;
+    font-size: 0.98rem;
+    font-weight: 650;
     color: var(--text-0);
     flex: 1;
     line-height: 1.2;
@@ -256,9 +231,8 @@ st.markdown("""
     flex-shrink: 0;
   }
   .score-text {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.7rem;
-    font-weight: 800;
+    font-size: 1.45rem;
+    font-weight: 700;
     color: var(--text-0);
     letter-spacing: 2px;
     line-height: 1;
@@ -298,27 +272,23 @@ st.markdown("""
     border-radius: 3px;
     transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
   }
-  .prob-home { background: linear-gradient(90deg,#2d7aff,#4e9eff); }
-  .prob-draw { background: linear-gradient(90deg,#484f58,#6e7681); }
-  .prob-away { background: linear-gradient(90deg,#e04f2b,#ff7043); }
+  .prob-home { background: #659fc8; }
+  .prob-draw { background: #707b86; }
+  .prob-away { background: #d89472; }
 
   /* ════ BANNIÈRE PRONOSTIC (hero) ════ */
   .reco-banner {
     width: 100%;
     border-radius: var(--radius-md);
-    padding: 0.9rem 1.2rem;
-    margin: 0.2rem 0 0.8rem;
+    padding: 0.65rem 0.85rem;
+    margin: 0.15rem 0 0.55rem;
     display: flex;
     flex-direction: column;
     gap: 3px;
-    position: relative;
-    overflow: hidden;
   }
   .reco-title {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.05rem;
-    font-weight: 800;
-    letter-spacing: -0.3px;
+    font-size: 0.92rem;
+    font-weight: 650;
     line-height: 1.2;
   }
   .reco-sub {
@@ -329,30 +299,29 @@ st.markdown("""
 
   /* Niveaux de signal */
   .reco-strong {
-    background: linear-gradient(135deg, rgba(45,202,86,0.20), rgba(45,202,86,0.10));
-    border: 1.5px solid var(--green);
-    box-shadow: var(--shadow-green);
+    background: var(--green-dim);
+    border: 1px solid var(--green-border);
   }
-  .reco-strong .reco-title { color: #2dca56; }
-  .reco-strong .reco-sub   { color: rgba(45,202,86,0.80); }
+  .reco-strong .reco-title { color: var(--green); }
+  .reco-strong .reco-sub   { color: var(--text-1); }
 
   .reco-medium {
     background: var(--blue-dim);
     border: 1.5px solid var(--blue-border);
   }
   .reco-medium .reco-title { color: var(--blue); }
-  .reco-medium .reco-sub   { color: rgba(78,158,255,0.75); }
+  .reco-medium .reco-sub   { color: var(--text-1); }
 
   .reco-low {
     background: var(--yellow-dim);
     border: 1.5px solid var(--yellow-border);
   }
   .reco-low .reco-title { color: var(--yellow); }
-  .reco-low .reco-sub   { color: rgba(227,162,52,0.75); }
+  .reco-low .reco-sub   { color: var(--text-1); }
 
   .reco-skip {
-    background: rgba(33,38,45,0.6);
-    border: 1px dashed var(--text-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
   }
   .reco-skip .reco-title { color: var(--text-2); }
   .reco-skip .reco-sub   { color: var(--text-3); }
@@ -374,8 +343,8 @@ st.markdown("""
     color: var(--text-1);
   }
   .score-pill.top {
-    background: rgba(45,202,86,0.12);
-    border-color: rgba(45,202,86,0.30);
+    background: var(--green-dim);
+    border-color: var(--green-border);
     color: var(--green);
   }
 
@@ -407,9 +376,8 @@ st.markdown("""
   }
   .stat-card:hover { border-color: var(--blue-border); }
   .stat-value {
-    font-family: 'Outfit', sans-serif;
     font-size: 2rem;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--blue);
     line-height: 1;
   }
@@ -451,7 +419,7 @@ st.markdown("""
     background: var(--green-dim);
     box-shadow: 0 0 16px rgba(45,202,86,0.12);
   }
-  .vb-ev    { font-family:'Outfit',sans-serif; font-size:1.5rem; font-weight:900; color:var(--green); min-width:64px; text-align:center; }
+  .vb-ev    { font-size:1.5rem; font-weight:750; color:var(--green); min-width:64px; text-align:center; }
   .vb-teams { flex:1; min-width:160px; }
   .vb-match { font-size:0.92rem; font-weight:700; color:var(--text-0); margin-bottom:3px; }
   .vb-comp  { font-size:0.7rem; color:var(--text-2); margin-bottom:4px; }
@@ -511,6 +479,18 @@ st.markdown("""
   section[data-testid="stSidebar"] {
     background: var(--bg-0) !important;
     border-right: 1px solid var(--border) !important;
+  }
+
+  @media (max-width: 700px) {
+    .block-container { padding: 0.5rem 0.8rem 1rem !important; }
+    .main-header { padding: 0.45rem 0 0.75rem; }
+    h1.main-title { font-size: 1.5rem !important; }
+    .warning-banner { font-size: 0.74rem; }
+    .stTabs [data-baseweb="tab"] { font-size: 0.75rem; padding: 0.5rem 0.55rem; }
+    .match-card { padding: 0.8rem; }
+    .team-name { font-size: 0.84rem; }
+    .score-box { min-width: 64px; padding: 0.4rem 0.55rem; }
+    .score-text { font-size: 1.2rem; }
   }
 
   /* ════ Inputs Streamlit ════ */
@@ -629,12 +609,12 @@ def render_recommendation(reco: dict):
     icon_map = {"strong": "🔥", "medium": "✅", "low": "⚠️", "skip": "⏸️"}
     icon = icon_map.get(level, "🔵")
 
-    verb = "PASSER" if level == "skip" else "MISER SUR"
+    verb = "Passer" if level == "skip" else "Pronostic :"
 
     st.markdown(f"""
     <div class="reco-banner reco-{level}">
       <div class="reco-title">{icon} {verb} {label}</div>
-      <div class="reco-sub">{conf}% confiance{ev_part} · {reason}</div>
+      <div class="reco-sub">Estimation du modèle : {conf}%{ev_part} · {reason}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -717,8 +697,8 @@ def render_match_card(match: dict, probs: dict, sport: str):
     st.markdown(f"""
     <div class="{card_class}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.8rem;">
-        <div style="font-size:0.78rem;color:var(--text-secondary);">
-          {competition}
+          <div style="font-size:0.78rem;color:var(--text-secondary);">
+            {competition}{f'<br><span style="color:var(--text-3)">{match_date}</span>' if match_date else ''}
         </div>
         {live_badge}
       </div>
@@ -742,54 +722,55 @@ def render_match_card(match: dict, probs: dict, sport: str):
     reco = get_recommendation(probs, sport, match)
     render_recommendation(reco)
 
-    # Top scores les plus probables (Dixon-Coles)
+    # Les informations secondaires restent disponibles sans alourdir la carte.
     top_scores = probs.get("top_scores", [])
-    if top_scores:
-        scores_html = " ".join(
-            f'<span class="meta-tag" style="font-weight:600;">{s["score"]} ({s["prob"]}%)</span>'
-            for s in top_scores[:3]
-        )
-        st.markdown(f'<div class="match-meta">🎯 Scores probables: {scores_html}</div>', unsafe_allow_html=True)
-
-    # Marchés alternatifs (Over/Under, BTTS, Double Chance)
     markets = probs.get("markets")
-    if markets and sport == "football":
-        with st.expander("📊 Marchés alternatifs (Over/Under, BTTS, Double Chance)", expanded=False):
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown(
-                    f"**⚽ Buts (Over/Under)**<br>"
-                    f"• +1.5 : <strong>{markets.get('over_1_5', 0)*100:.1f}%</strong><br>"
-                    f"• <strong>+2.5</strong> : <strong style='color:#39d353;'>{markets.get('over_2_5', 0)*100:.1f}%</strong><br>"
-                    f"• -2.5 : <strong>{markets.get('under_2_5', 0)*100:.1f}%</strong><br>"
-                    f"• +3.5 : <strong>{markets.get('over_3_5', 0)*100:.1f}%</strong>",
-                    unsafe_allow_html=True
+    if top_scores or markets or model_type or elo_info:
+        with st.expander("Détails du match et marchés", expanded=False):
+            details = [model_type]
+            if elo_info:
+                details.append(elo_info)
+            if match_date:
+                details.append(match_date)
+            st.caption(" · ".join(details))
+
+            if top_scores:
+                scores_html = " ".join(
+                    f'<span class="meta-tag" style="font-weight:600;">{s["score"]} ({s["prob"]}%)</span>'
+                    for s in top_scores[:3]
                 )
-            with m2:
                 st.markdown(
-                    f"**🥅 Les deux marquent**<br>"
-                    f"• Oui : <strong style='color:#58a6ff;'>{markets.get('btts_yes', 0)*100:.1f}%</strong><br>"
-                    f"• Non : <strong>{markets.get('btts_no', 0)*100:.1f}%</strong>",
-                    unsafe_allow_html=True
-                )
-            with m3:
-                st.markdown(
-                    f"**🛡️ Double Chance**<br>"
-                    f"• 1X : <strong>{markets.get('dc_1x', 0)*100:.1f}%</strong><br>"
-                    f"• X2 : <strong>{markets.get('dc_x2', 0)*100:.1f}%</strong><br>"
-                    f"• 12 : <strong>{markets.get('dc_12', 0)*100:.1f}%</strong>",
+                    f'<div class="match-meta">Scores les plus probables : {scores_html}</div>',
                     unsafe_allow_html=True
                 )
 
-    # Méta info supplémentaire
-    if elo_info or model_type:
-        st.markdown(f"""
-        <div class="match-meta">
-          <span class="meta-tag">🤖 {model_type}</span>
-          {f'<span class="meta-tag">📊 {elo_info}</span>' if elo_info else ''}
-          {f'<span class="meta-tag">📅 {match_date}</span>' if match_date else ''}
-        </div>
-        """, unsafe_allow_html=True)
+            if markets and sport == "football":
+                st.markdown("**Marchés alternatifs**")
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.markdown(
+                        f"**⚽ Buts**<br>"
+                        f"• +1.5 : <strong>{markets.get('over_1_5', 0)*100:.1f}%</strong><br>"
+                        f"• +2.5 : <strong>{markets.get('over_2_5', 0)*100:.1f}%</strong><br>"
+                        f"• -2.5 : <strong>{markets.get('under_2_5', 0)*100:.1f}%</strong><br>"
+                        f"• +3.5 : <strong>{markets.get('over_3_5', 0)*100:.1f}%</strong>",
+                        unsafe_allow_html=True
+                    )
+                with m2:
+                    st.markdown(
+                        f"**🥅 Les deux marquent**<br>"
+                        f"• Oui : <strong>{markets.get('btts_yes', 0)*100:.1f}%</strong><br>"
+                        f"• Non : <strong>{markets.get('btts_no', 0)*100:.1f}%</strong>",
+                        unsafe_allow_html=True
+                    )
+                with m3:
+                    st.markdown(
+                        f"**🛡️ Double chance**<br>"
+                        f"• 1X : <strong>{markets.get('dc_1x', 0)*100:.1f}%</strong><br>"
+                        f"• X2 : <strong>{markets.get('dc_x2', 0)*100:.1f}%</strong><br>"
+                        f"• 12 : <strong>{markets.get('dc_12', 0)*100:.1f}%</strong>",
+                        unsafe_allow_html=True
+                    )
 
     st.markdown("---")
 
@@ -1982,7 +1963,7 @@ def render_week_tab():
                             st.markdown(
                                 f'<div style="background:rgba(45,202,86,0.12);border:1.5px solid #2dca56;'
                                 f'border-radius:12px;padding:0.7rem 1rem;margin-bottom:0.4rem;text-align:center;">'
-                                f'<div style="font-family:Outfit,sans-serif;font-size:1rem;font-weight:800;color:#2dca56;">'
+                                f'<div style="font-size:1rem;font-weight:700;color:var(--green);">'
                                 f'\U0001f525 VALUE BET &mdash; Miser sur {pick} @ {odd_val:.2f}</div>'
                                 f'<div style="font-size:0.78rem;color:rgba(45,202,86,0.8);">'
                                 f'EV +{ev_pct}% · {matched_odds.get("n_bookmakers","?")}</div></div>',
@@ -2244,8 +2225,8 @@ def main():
     # ── Header ────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="main-header">
-      <h1 class="main-title">🎯 SportsPredikt</h1>
-      <p class="main-subtitle">Pronostics en temps réel • Football & Basketball • Powered by ML</p>
+      <h1 class="main-title">SportsPredikt</h1>
+      <p class="main-subtitle">Pronostics football et basketball · données actualisées automatiquement</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2259,13 +2240,13 @@ def main():
     """, unsafe_allow_html=True)
 
     # ── Rafraîchissement automatique ───────────────────────────────────────
-    refresh_col1, refresh_col2, refresh_col3 = st.columns([3, 1, 1])
-    with refresh_col2:
+    refresh_col1, refresh_col2 = st.columns([1, 1])
+    with refresh_col1:
         auto_refresh = st.toggle("🔄 Auto-refresh", value=True, key="auto_refresh")
-    with refresh_col3:
+    with refresh_col2:
         last_update = st.empty()
         last_update.markdown(
-            f"<small style='color:#8b949e'>Mis à jour: {datetime.now().strftime('%H:%M:%S')}</small>",
+            f"<small style='color:#8b949e'>Mis à jour à {datetime.now().strftime('%H:%M:%S')}</small>",
             unsafe_allow_html=True
         )
 
@@ -2298,10 +2279,8 @@ def main():
 
     # ── Pied de page ───────────────────────────────────────────────────────
     st.markdown("""
-    <div style="text-align:center;padding:2rem 0 1rem;color:#8b949e;font-size:0.78rem;border-top:1px solid #30363d;margin-top:2rem;">
-      SportsPredikt v2 &bull; Données: football-data.org &amp; balldontlie &amp; The Odds API &bull;
-      Modèles: Elo + Dixon-Coles (foot), Elo + Loi Normale (basket) &bull; EV = Value espérée<br>
-      <span style="color:#e3b341">⚠️ Probabilités indicatives — Aucun résultat garanti</span>
+    <div style="text-align:center;padding:1rem 0 0.5rem;color:#8b949e;font-size:0.72rem;border-top:1px solid var(--border);margin-top:1.5rem;">
+      SportsPredikt v2 · Probabilités indicatives — aucun résultat garanti
     </div>
     """, unsafe_allow_html=True)
 
