@@ -89,9 +89,15 @@ class BasketballModel:
         home_pts = 0.5 * (off_h + def_a) + NBA_HOME_ADVANTAGE_POINTS / 2
         away_pts = 0.5 * (off_a + def_h) - NBA_HOME_ADVANTAGE_POINTS / 2
 
+        both_teams_unrated = n_h == 0 and n_a == 0
         elo_spread = (
-            (self.elo.get_rating(home_team) + self.elo.home_advantage - self.elo.get_rating(away_team))
-            / ELO_TO_POINTS
+            0.0
+            if both_teams_unrated
+            else (
+                self.elo.get_rating(home_team)
+                + self.elo.home_advantage
+                - self.elo.get_rating(away_team)
+            ) / ELO_TO_POINTS
         )
         rating_spread = home_pts - away_pts
         n = min(n_h, n_a)

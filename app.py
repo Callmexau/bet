@@ -2,7 +2,7 @@
 """
 app.py - Tableau de bord de pronostics sportifs
 Interface Streamlit avec onglets Football / Basketball,
-rafraîchissement automatique toutes les 30 secondes,
+rafraîchissement automatique différencié selon les matchs,
 et graphiques d'évolution des probabilités en direct.
 
 Lancement : streamlit run app.py
@@ -15,7 +15,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
+from datetime import date, datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,13 +29,15 @@ logger = logging.getLogger(__name__)
 
 # ── Imports locaux ─────────────────────────────────────────────────────────
 from data_client import (
-    FootballClient, BasketballClient, OddsClient,
+    FootballClient, BasketballClient, OddsClient, FOOTBALL_HISTORY_COMPETITIONS,
+    LIVE_REFRESH_INTERVAL_SECONDS, UPCOMING_REFRESH_INTERVAL_SECONDS,
+    is_live_match, match_list_refresh_interval_seconds,
 )
 from weather_client import WeatherClient
 from models.football import FootballModel
 from models.basketball import BasketballModel
 from db import (
-    save_prediction, get_history_from_db,
+    save_prediction,
     add_bet, get_bets, settle_bet, delete_bet, get_bankroll_stats
 )
 from telegram_alert import send_value_bets_alert, is_telegram_configured
@@ -556,7 +558,8 @@ def get_recommendation(probs: dict, sport: str, match: dict, odds: dict | None =
 
     Logique :
     - Si odds dispo   : recommande l'issue avec EV la plus élevée (si EV > 0)
-    - Sans odds       : recommande l'issue avec la probabilité la plus haute
+    - Sans odds       : recommande l'issue la plus probable, sauf égalité
+                        entre plusieurs issues (match équilibré)
     - Seuils confiance : Forte >= 60%, Moyenne 45-60%, Faible 33-45%, Passer < 33%
 
     Retourne :
@@ -616,6 +619,20 @@ def get_recommendation(probs: dict, sport: str, match: dict, odds: dict | None =
         probs_map["draw"] = 0
         best_k = max(probs_map, key=probs_map.get)
         conf   = probs_map[best_k]
+
+    tied_outcomes = [
+        outcome for outcome, probability in probs_map.items()
+        if probability > 0 and abs(probability - conf) <= 0.0001
+    ]
+    if len(tied_outcomes) > 1:
+        return {
+            "outcome": "skip",
+            "label": "Match équilibré",
+            "conf": conf,
+            "level": "skip",
+            "ev": None,
+            "reason": "Aucun favori ne se dégage des probabilités estimées",
+        }
 
     if conf < 0.33:
         return {"outcome": "skip", "label": "➖ Passer ce match",
@@ -980,12 +997,20 @@ def build_probability_chart(history: list[dict], home_team: str, away_team: str,
 # Les modèles Elo SONT mis en cache car leur entraînement est coûteux.
 TRAINING_HISTORY_LIMIT = 5000
 FOOTBALL_PREMATCH_STATUSES = {"SCHEDULED", "TIMED"}
+BASKETBALL_TEAM_HISTORY_LIMIT = 20
 MIN_VALUE_BET_HISTORY = 200
 MIN_RECOMMENDED_EV = 0.08
 MIN_VALUE_PROBABILITY = 0.65
 MAX_VALUE_ODDS = 1.80
 MAX_SINGLE_STAKE_FRACTION = 0.005
 MAX_PORTFOLIO_STAKE_FRACTION = 0.01
+
+
+def _track_matches_for_refresh(matches: list[dict]) -> None:
+    st.session_state.setdefault("refresh_matches", []).extend(matches)
+    if any(is_live_match(match) for match in matches):
+        st.session_state["has_live_matches"] = True
+
 
 def get_football_client() -> FootballClient:
     return FootballClient()
@@ -1031,25 +1056,9 @@ def is_value_bet_eligible(probability: float, odds: float, ev: float, min_ev: fl
     )
 
 
-def _training_history_json(sport: str) -> str:
-    history = get_history_from_db(sport, limit=TRAINING_HISTORY_LIMIT)
-    training_rows = [
-        {
-            "home_team": match["home_team"],
-            "away_team": match["away_team"],
-            "home_score": match["home_score"],
-            "away_score": match["away_score"],
-            "match_date": match["match_date"],
-            "competition": match.get("competition"),
-        }
-        for match in history
-    ]
-    return json.dumps(training_rows, ensure_ascii=False, sort_keys=True)
-
-
 @st.cache_resource(show_spinner=False, max_entries=2)
 def _train_football_model(history_json: str) -> FootballModel:
-    """Instancie et entraîne le modèle football sur l'historique en DB."""
+    """Instancie et entraîne le modèle football sur l'historique fourni par l'API."""
     model = FootballModel()
     history = json.loads(history_json)
     if history:
@@ -1057,29 +1066,29 @@ def _train_football_model(history_json: str) -> FootballModel:
     return model
 
 
-def _sync_football_history() -> None:
-    client = get_football_client()
-    sync_history = getattr(client, "sync_competition_history", None)
-    if not callable(sync_history):
-        logger.warning(
-            "Synchronisation de l'historique indisponible dans cette version "
-            "de FootballClient."
-        )
-        return
-    sync_history()
-
-
 def get_football_model() -> FootballModel:
-    history_json = _training_history_json("football")
-    if len(json.loads(history_json)) < MIN_VALUE_BET_HISTORY:
-        _sync_football_history()
-        history_json = _training_history_json("football")
+    client = get_football_client()
+    history_by_id = {}
+    for competition in FOOTBALL_HISTORY_COMPETITIONS:
+        for match in client.get_competition_history(competition):
+            match_id = match.get("id")
+            if match_id is not None:
+                history_by_id[str(match_id)] = match
+    history = sorted(
+        history_by_id.values(),
+        key=lambda match: (match.get("match_date", ""), str(match["id"])),
+    )[-TRAINING_HISTORY_LIMIT:]
+    if not history:
+        logger.warning(
+            "Aucun historique football reçu de l'API ; modèle en mode estimations par défaut."
+        )
+    history_json = json.dumps(history, ensure_ascii=False, sort_keys=True)
     return _train_football_model(history_json)
 
 
 @st.cache_resource(show_spinner=False, max_entries=2)
 def _train_basketball_model(history_json: str) -> BasketballModel:
-    """Instancie et entraîne le modèle basketball sur l'historique en DB."""
+    """Instancie et entraîne le modèle basketball sur l'historique reçu de l'API."""
     model = BasketballModel()
     history = json.loads(history_json)
     if history:
@@ -1087,8 +1096,48 @@ def _train_basketball_model(history_json: str) -> BasketballModel:
     return model
 
 
-def get_basketball_model() -> BasketballModel:
-    return _train_basketball_model(_training_history_json("basketball"))
+def get_basketball_model(history: list[dict]) -> BasketballModel:
+    history_json = json.dumps(history, ensure_ascii=False, sort_keys=True)
+    return _train_basketball_model(history_json)
+
+
+def _fetch_basketball_history(client: BasketballClient, matches: list[dict]) -> list[dict]:
+    """Récupère l'historique récent des équipes affichées directement depuis l'API."""
+    teams_to_fetch = {}
+    for match in matches:
+        if match.get("status") == "Final":
+            continue
+        for team_key, id_key in (
+            ("home_team", "home_team_id"),
+            ("away_team", "away_team_id"),
+        ):
+            team_id = match.get(id_key)
+            if team_id is not None:
+                teams_to_fetch[str(team_id)] = team_id
+
+    completed_games: dict[str, dict] = {}
+    today = date.today().isoformat()
+    for team_id in teams_to_fetch.values():
+        for game in client.get_history(team_id, n=BASKETBALL_TEAM_HISTORY_LIMIT):
+            game_id = game.get("id")
+            game_date = game.get("match_date", "")
+            home_score = game.get("home_score")
+            away_score = game.get("away_score")
+            if (
+                game_id is None
+                or game.get("status") != "Final"
+                or not game_date
+                or game_date >= today
+                or not isinstance(home_score, (int, float))
+                or not isinstance(away_score, (int, float))
+            ):
+                continue
+            completed_games[str(game_id)] = game
+
+    return sorted(
+        completed_games.values(),
+        key=lambda game: (game["match_date"], str(game["id"])),
+    )
 
 
 def render_sidebar():
@@ -1168,13 +1217,13 @@ def render_sidebar():
         )
 
 
-def render_football_tab():
+def render_football_tab(model: FootballModel):
     """Affiche le contenu de l'onglet Football."""
     client = get_football_client()
-    model  = get_football_model()
 
     with st.spinner("⚽ Chargement des matchs de football..."):
         matches = client.get_today_matches()
+    _track_matches_for_refresh(matches)
 
     st.caption(
         "Les blessures, suspensions et compositions ne sont pas couvertes par les "
@@ -1272,10 +1321,10 @@ def render_football_tab():
 def render_basketball_tab():
     """Affiche le contenu de l'onglet Basketball."""
     client = get_basketball_client()
-    model  = get_basketball_model()
 
     with st.spinner("🏀 Chargement des matchs NBA..."):
         matches = client.get_today_matches()
+    _track_matches_for_refresh(matches)
 
     if not matches:
         st.markdown("""
@@ -1287,6 +1336,14 @@ def render_basketball_tab():
         </div>
         """, unsafe_allow_html=True)
         return
+
+    history = _fetch_basketball_history(client, matches)
+    model = get_basketball_model(history)
+    if not history:
+        st.info(
+            "Historique NBA indisponible via l’API : les pronostics sont équilibrés "
+            "faute de données récentes."
+        )
 
     # Trier les matchs
     def bask_order(m):
@@ -1411,13 +1468,12 @@ def cap_portfolio_stakes(value_bets: list[dict], bankroll: float, currency: str)
         value_bet["kelly_pct"] = round(value_bet["stake"] / bankroll * 100, 2)
 
 
-def render_value_bets_tab():
+def render_value_bets_tab(model: FootballModel):
     """
     Onglet Value Bets : liste uniquement les matchs à EV positif,
     triés par valeur décroissante, avec mise Kelly conseillée.
     """
     client  = get_football_client()
-    model   = get_football_model()
     odds_cl = get_odds_client()
     history_count = football_history_count(model)
     if history_count < MIN_VALUE_BET_HISTORY:
@@ -1834,7 +1890,7 @@ def render_bets_journal_tab():
     st.dataframe(pd.DataFrame(hist_data), use_container_width=True, hide_index=True)
 
 
-def render_calendar_tab():
+def render_calendar_tab(model: FootballModel):
     """
     Onglet Calendrier : vue hebdomadaire avec cases cliquables.
     Code couleur : vert = value bet, bleu = match normal, gris = peu de matchs.
@@ -1844,7 +1900,6 @@ def render_calendar_tab():
     from collections import defaultdict
 
     client  = get_football_client()
-    model   = get_football_model()
     odds_cl = get_odds_client()
     odds_available = odds_cl._is_available()
     history_count = football_history_count(model)
@@ -2041,17 +2096,17 @@ def render_ev_badge(ev_val: float | None, label: str) -> str:
     return f'<span style="color:{color};font-weight:700;font-size:0.82rem;">{icon} {label}: {sign}{pct}%</span>'
 
 
-def render_week_tab():
+def render_week_tab(model: FootballModel):
     """
     Onglet 'Semaine + Cotes' : matchs des 7 prochains jours
     avec probabilités Dixon-Coles, cotes bookmakers et calcul EV.
     """
     client  = get_football_client()
-    model   = get_football_model()
     odds_cl = get_odds_client()
 
     with st.spinner("📅 Chargement des matchs de la semaine..."):
         week_matches = client.get_week_matches(days=7)
+    _track_matches_for_refresh(week_matches)
 
     # Récupérer les cotes si l'API Odds est configurée
     odds_available = odds_cl._is_available()
@@ -2454,9 +2509,12 @@ def render_performance_tab():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main():
-
+    st.session_state["has_live_matches"] = False
+    st.session_state["refresh_matches"] = []
     # ── Sidebar ───────────────────────────────────────────────────────────
     render_sidebar()
+    with st.spinner("⚽ Chargement de l'historique football depuis l'API..."):
+        football_model = get_football_model()
 
     # ── Header ────────────────────────────────────────────────────────────
     st.markdown("""
@@ -2480,7 +2538,7 @@ def main():
         last_update = st.empty()
         last_update.markdown(
             f"<small style='color:#8b949e'>Actualisé à {datetime.now().strftime('%H:%M')}</small>",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     # ── Onglets principaux ─────────────────────────────────────────────────
@@ -2489,22 +2547,22 @@ def main():
     )
 
     with tab_foot:
-        render_football_tab()
+        render_football_tab(football_model)
 
     with tab_bask:
         render_basketball_tab()
 
     with tab_week:
-        render_week_tab()
+        render_week_tab(football_model)
 
     with tab_vb:
-        render_value_bets_tab()
+        render_value_bets_tab(football_model)
 
     with tab_bets:
         render_bets_journal_tab()
 
     with tab_cal:
-        render_calendar_tab()
+        render_calendar_tab(football_model)
 
     with tab_perf:
         render_performance_tab()
@@ -2516,9 +2574,25 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Auto-refresh toutes les 30 secondes ────────────────────────────────
+    has_live_matches = st.session_state.get("has_live_matches", False)
+    refresh_interval = match_list_refresh_interval_seconds(
+        st.session_state.get("refresh_matches", [])
+    )
+    refresh_label = f"{LIVE_REFRESH_INTERVAL_SECONDS} s (match en direct)"
+    if not has_live_matches:
+        if refresh_interval < UPCOMING_REFRESH_INTERVAL_SECONDS:
+            refresh_label = (
+                f"{max(1, refresh_interval // 60)} min (proche du coup d'envoi)"
+            )
+        else:
+            refresh_label = "35 min (matchs à venir)"
+    last_update.markdown(
+        f"<small style='color:#8b949e'>Actualisé à {datetime.now().strftime('%H:%M')} "
+        f"· Prochain rafraîchissement : {refresh_label}</small>",
+        unsafe_allow_html=True,
+    )
     if auto_refresh:
-        time.sleep(30)
+        time.sleep(refresh_interval)
         st.rerun()
 
 

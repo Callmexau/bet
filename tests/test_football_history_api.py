@@ -12,6 +12,9 @@ from data_client import FootballClient
 
 class FootballHistoryApiTests(unittest.TestCase):
     def setUp(self):
+        import data_client
+
+        data_client._FOOTBALL_HISTORY_API_CACHE.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_db_path = db.DB_PATH
         db.DB_PATH = Path(self.temp_dir.name) / "history.db"
@@ -21,7 +24,7 @@ class FootballHistoryApiTests(unittest.TestCase):
         db.DB_PATH = self.original_db_path
         self.temp_dir.cleanup()
 
-    def test_imports_only_finished_results_and_caches_them(self):
+    def test_fetches_only_finished_results_from_api_without_local_persistence(self):
         response = {
             "matches": [
                 {
@@ -46,15 +49,22 @@ class FootballHistoryApiTests(unittest.TestCase):
         }
         with patch.dict(os.environ, {"FOOTBALL_DATA_API_KEY": "test-key"}):
             client = FootballClient()
-        with patch.object(client, "_safe_request", return_value=response) as request:
+        with (
+            patch.object(client, "_safe_request", return_value=response) as request,
+            patch("data_client.cache_get", return_value=None) as cache_get,
+            patch("data_client.cache_set") as cache_set,
+            patch("data_client.save_matches", create=True) as save_matches,
+        ):
             matches = client.get_competition_history("PL")
-            cached_matches = client.get_competition_history("PL")
+            refreshed_matches = client.get_competition_history("PL")
 
         self.assertEqual(len(matches), 1)
-        self.assertEqual(matches, cached_matches)
+        self.assertEqual(matches, refreshed_matches)
         self.assertEqual(matches[0]["home_score"], 2)
         self.assertEqual(request.call_count, 1)
-        self.assertEqual(len(db.get_history_from_db("football", limit=10)), 1)
+        cache_get.assert_not_called()
+        cache_set.assert_not_called()
+        save_matches.assert_not_called()
 
     def test_api_history_does_not_replace_imported_match_data(self):
         imported_match = {
@@ -80,45 +90,42 @@ class FootballHistoryApiTests(unittest.TestCase):
             1.8,
         )
 
-    def test_failed_history_request_is_cached_to_avoid_repeating_it(self):
+    def test_failed_history_request_is_cached_in_memory(self):
         with patch.dict(os.environ, {"FOOTBALL_DATA_API_KEY": "test-key"}):
             client = FootballClient()
         with patch.object(client, "_safe_request", return_value=None) as request:
             self.assertEqual(client.get_competition_history("PL"), [])
             self.assertEqual(client.get_competition_history("PL"), [])
 
-        request.assert_called_once()
+        self.assertEqual(request.call_count, 1)
 
-    def test_model_refreshes_history_before_training_when_database_is_small(self):
-        initial_history = json.dumps([])
-        refreshed_history = json.dumps([{"home_team": "Home", "away_team": "Away"}])
+    def test_model_fetches_api_history_every_time_without_reading_local_history(self):
+        history = [{
+            "id": "match-1",
+            "home_team": "Home",
+            "away_team": "Away",
+            "home_score": 2,
+            "away_score": 1,
+            "match_date": "2025-08-15",
+            "competition": "Premier League",
+        }]
         with (
-            patch.object(
-                app,
-                "_training_history_json",
-                side_effect=[initial_history, refreshed_history],
-            ),
             patch.object(app, "get_football_client") as get_client,
             patch.object(app, "_train_football_model", return_value="trained") as train,
+            patch.object(db, "get_history_from_db", side_effect=AssertionError),
         ):
-            model = app.get_football_model()
+            get_client.return_value.get_competition_history.return_value = history
+            first_model = app.get_football_model()
+            second_model = app.get_football_model()
 
-        get_client.return_value.sync_competition_history.assert_called_once_with()
-        train.assert_called_once_with(refreshed_history)
-        self.assertEqual(model, "trained")
-
-    def test_model_does_not_fail_when_client_lacks_history_sync_method(self):
-        client = FootballClient()
-        client.sync_competition_history = None
-        with (
-            patch.object(app, "get_football_client", return_value=client),
-            patch.object(app, "_train_football_model", return_value="trained") as train,
-            patch.object(app, "_training_history_json", return_value=json.dumps([])),
-        ):
-            model = app.get_football_model()
-
-        train.assert_called_once_with(json.dumps([]))
-        self.assertEqual(model, "trained")
+        self.assertEqual(first_model, "trained")
+        self.assertEqual(second_model, "trained")
+        self.assertEqual(
+            get_client.return_value.get_competition_history.call_count,
+            2 * len(app.FOOTBALL_HISTORY_COMPETITIONS),
+        )
+        self.assertEqual(train.call_count, 2)
+        self.assertEqual(json.loads(train.call_args.args[0]), history)
 
 
 if __name__ == "__main__":

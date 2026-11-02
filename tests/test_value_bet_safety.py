@@ -41,11 +41,10 @@ class ValueBetSafetyTests(unittest.TestCase):
 
         with (
             patch.object(app, "get_football_client"),
-            patch.object(app, "get_football_model", return_value=model),
             patch.object(app, "get_odds_client", return_value=odds_client),
             patch.object(app, "st", MagicMock()),
         ):
-            app.render_value_bets_tab()
+            app.render_value_bets_tab(model)
 
     def test_conservative_probabilities_shrink_model_edge_toward_market(self):
         model_probs = {

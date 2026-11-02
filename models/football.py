@@ -98,6 +98,9 @@ class FootballModel:
     # ── λ ──────────────────────────────────────────────────────────────────
 
     def _league_means(self, match_or_code) -> tuple[float, float]:
+        if not self.history:
+            average = sum(self.league_avgs["_global"]) / 2
+            return average, average
         if isinstance(match_or_code, dict):
             code = competition_code(match_or_code) or "_global"
             if is_neutral_venue(match_or_code):

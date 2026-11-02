@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 data_client.py - Clients API pour football-data.org, balldontlie et The Odds API.
-Interface commune : get_today_matches(), get_live_match(id), get_history(team, n=20)
-Toutes les réponses sont mises en cache dans SQLite.
+Interface commune : get_today_matches(), get_live_match(id), get_history(team, n=20).
+Les listes sont mises en cache avec un TTL adaptatif ; l'historique API est en mémoire.
 """
 
 import os
 import logging
 import requests
-from datetime import date, datetime, timedelta
+import time
+from datetime import date, datetime, timedelta, timezone
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
-from db import cache_get, cache_set, save_match, save_matches, CACHE_TTL
+from db import cache_get, cache_set, CACHE_TTL
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -36,6 +37,68 @@ FOOTBALL_COMPETITIONS = [
 FOOTBALL_HISTORY_COMPETITIONS = tuple(
     competition for competition in FOOTBALL_COMPETITIONS if competition != "CAN"
 )
+LIVE_REFRESH_INTERVAL_SECONDS = 30
+UPCOMING_REFRESH_INTERVAL_SECONDS = 35 * 60
+
+_FOOTBALL_HISTORY_API_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_BASKETBALL_HISTORY_API_CACHE: dict[
+    tuple[str, int, int], tuple[float, list[dict]]
+] = {}
+
+
+def is_live_match(match: dict) -> bool:
+    period = match.get("period")
+    return (
+        match.get("status") in ("IN_PLAY", "PAUSED")
+        or (
+            match.get("sport") == "basketball"
+            and isinstance(period, (int, float))
+            and period > 0
+            and match.get("status") != "Final"
+        )
+    )
+
+
+def match_list_refresh_interval_seconds(matches: list[dict]) -> int:
+    if any(is_live_match(match) for match in matches):
+        return LIVE_REFRESH_INTERVAL_SECONDS
+
+    now = datetime.now(timezone.utc)
+    upcoming_kickoffs = []
+    for match in matches:
+        if match.get("status") in ("FINISHED", "Final"):
+            continue
+        raw = match.get("raw") or {}
+        if not isinstance(raw, dict):
+            continue
+        kickoff = (
+            match.get("kickoff_utc")
+            or raw.get("utcDate")
+            or raw.get("commence_time")
+            or raw.get("datetime")
+        )
+        if not isinstance(kickoff, str) or "T" not in kickoff:
+            continue
+        try:
+            kickoff_at = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if kickoff_at.tzinfo is None:
+            kickoff_at = kickoff_at.replace(tzinfo=timezone.utc)
+        upcoming_kickoffs.append(kickoff_at.astimezone(timezone.utc))
+
+    if not upcoming_kickoffs:
+        return UPCOMING_REFRESH_INTERVAL_SECONDS
+
+    seconds_to_next_kickoff = int((min(upcoming_kickoffs) - now).total_seconds())
+    return min(
+        UPCOMING_REFRESH_INTERVAL_SECONDS,
+        max(LIVE_REFRESH_INTERVAL_SECONDS, seconds_to_next_kickoff),
+    )
+
+
+def _match_list_cache_ttl(matches: list[dict]) -> int:
+    return match_list_refresh_interval_seconds(matches)
 
 # ─────────────────────────── Classe de base ────────────────────────────────
 
@@ -186,8 +249,6 @@ class FootballClient(BaseClient):
                 if comp_code in target_comps:
                     normalized = self._normalize_match(m)
                     all_matches.append(normalized)
-                    if m.get("status") == "FINISHED":
-                        save_match(normalized, "football")
         else:
             # Fallback par compétition si la requête globale échoue
             fd_comps = [c for c in FOOTBALL_COMPETITIONS if c != "CAN"]
@@ -198,15 +259,13 @@ class FootballClient(BaseClient):
                     for m in data_c["matches"]:
                         normalized = self._normalize_match(m)
                         all_matches.append(normalized)
-                        if m.get("status") == "FINISHED":
-                            save_match(normalized, "football")
 
         # 2. Matchs CAN (via The Odds API si active)
         if "CAN" in FOOTBALL_COMPETITIONS:
             can_matches = self._get_can_matches(today, today)
             all_matches.extend(can_matches)
 
-        cache_set(cache_key, all_matches, ttl=CACHE_TTL["today_matches"])
+        cache_set(cache_key, all_matches, ttl=_match_list_cache_ttl(all_matches))
         logger.info("Football: %d matchs aujourd'hui", len(all_matches))
         return all_matches
 
@@ -237,8 +296,6 @@ class FootballClient(BaseClient):
                 if comp_code in target_comps:
                     normalized = self._normalize_match(m)
                     all_matches.append(normalized)
-                    if m.get("status") == "FINISHED":
-                        save_match(normalized, "football")
         else:
             # Fallback par compétition
             fd_comps = [c for c in FOOTBALL_COMPETITIONS if c != "CAN"]
@@ -249,16 +306,13 @@ class FootballClient(BaseClient):
                     for m in data_c["matches"]:
                         normalized = self._normalize_match(m)
                         all_matches.append(normalized)
-                        if m.get("status") == "FINISHED":
-                            save_match(normalized, "football")
 
         # 2. Matchs CAN (via The Odds API si active)
         if "CAN" in FOOTBALL_COMPETITIONS:
             can_matches = self._get_can_matches(today.isoformat(), end.isoformat())
             all_matches.extend(can_matches)
 
-        # Cache plus long pour les données de la semaine (15 min)
-        cache_set(cache_key, all_matches, ttl=900)
+        cache_set(cache_key, all_matches, ttl=_match_list_cache_ttl(all_matches))
         logger.info("Football: %d matchs cette semaine", len(all_matches))
         return all_matches
 
@@ -345,15 +399,14 @@ class FootballClient(BaseClient):
         return []
 
     def get_competition_history(self, competition_code: str) -> list[dict]:
-        """Récupère et persiste les résultats terminés d'une compétition."""
+        """Récupère directement depuis l'API les résultats terminés d'une compétition."""
         code = competition_code.upper()
-        if code not in FOOTBALL_HISTORY_COMPETITIONS:
+        if code not in FOOTBALL_HISTORY_COMPETITIONS or not self.api_key:
             return []
 
-        cache_key = f"football:competition_history:{code}"
-        cached = cache_get(cache_key)
-        if cached is not None:
-            return cached
+        cached = _FOOTBALL_HISTORY_API_CACHE.get(code)
+        if cached and time.monotonic() - cached[0] < UPCOMING_REFRESH_INTERVAL_SECONDS:
+            return cached[1]
 
         url = f"{FOOTBALL_BASE_URL}/competitions/{code}/matches"
         data = self._safe_request(
@@ -362,7 +415,7 @@ class FootballClient(BaseClient):
             params={"status": "FINISHED"},
         )
         if data is None or "matches" not in data:
-            cache_set(cache_key, [], ttl=CACHE_TTL["history"])
+            _FOOTBALL_HISTORY_API_CACHE[code] = (time.monotonic(), [])
             return []
 
         matches = []
@@ -373,26 +426,13 @@ class FootballClient(BaseClient):
             if match["home_score"] is not None and match["away_score"] is not None:
                 matches.append(match)
 
-        if matches:
-            save_matches(matches, "football", replace=False)
-        cache_set(cache_key, matches, ttl=CACHE_TTL["history"])
+        _FOOTBALL_HISTORY_API_CACHE[code] = (time.monotonic(), matches)
         logger.info(
             "Football: %d résultats historiques récupérés pour %s",
             len(matches),
             code,
         )
         return matches
-
-    def sync_competition_history(self) -> int:
-        """Synchronise les résultats disponibles des compétitions suivies."""
-        if not self.api_key:
-            return 0
-
-        return sum(
-            len(self.get_competition_history(code))
-            for code in FOOTBALL_HISTORY_COMPETITIONS
-        )
-
 
 # ──────────────────────── Client Basketball ────────────────────────────────
 
@@ -481,10 +521,7 @@ class BasketballClient(BaseClient):
 
         if data and "data" in data:
             matches = [self._normalize_game(g) for g in data["data"]]
-            for m in matches:
-                if m["status"] == "Final":
-                    save_match(m, "basketball")
-            cache_set(cache_key, matches, ttl=CACHE_TTL["today_matches"])
+            cache_set(cache_key, matches, ttl=_match_list_cache_ttl(matches))
             logger.info("Basketball: %d matchs aujourd'hui", len(matches))
             return matches
         return []
@@ -506,15 +543,14 @@ class BasketballClient(BaseClient):
         return None
 
     def get_history(self, team_id: int | str, n: int = 20) -> list[dict]:
-        """Retourne les n derniers matchs d'une équipe NBA."""
-        cache_key = f"basketball:history:{team_id}:{n}"
-        cached = cache_get(cache_key)
-        if cached is not None:
-            return cached
-
+        """Récupère directement les n derniers matchs d'une équipe NBA via l'API."""
         # Saison en cours (NBA saison commence en octobre)
         current_year = date.today().year
         season = current_year if date.today().month >= 10 else current_year - 1
+        cache_key = (str(team_id), season, n)
+        cached = _BASKETBALL_HISTORY_API_CACHE.get(cache_key)
+        if cached and time.monotonic() - cached[0] < UPCOMING_REFRESH_INTERVAL_SECONDS:
+            return cached[1]
 
         url = f"{BALLDONTLIE_BASE_URL}/games"
         params = {
@@ -526,9 +562,10 @@ class BasketballClient(BaseClient):
 
         if data and "data" in data:
             matches = [self._normalize_game(g) for g in data["data"][:n]]
-            cache_set(cache_key, matches, ttl=CACHE_TTL["history"])
-            return matches
-        return []
+        else:
+            matches = []
+        _BASKETBALL_HISTORY_API_CACHE[cache_key] = (time.monotonic(), matches)
+        return matches
 
     def get_all_teams(self) -> list[dict]:
         """Retourne la liste de toutes les équipes NBA."""
