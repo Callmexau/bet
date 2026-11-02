@@ -708,8 +708,8 @@ def render_football_market_forecasts(probs: dict) -> None:
     history_matches = int(probs.get("history_matches", 0))
     if history_matches == 0:
         st.caption(
-            "Modèle sans historique : estimations indicatives, non validées et "
-            "à ne pas interpréter comme des conseils de pari."
+            "Modèle sans historique : estimations indicatives basées sur les "
+            "moyennes par défaut, à prendre avec prudence."
         )
     else:
         st.caption(
@@ -854,13 +854,8 @@ def render_match_card(match: dict, probs: dict, sport: str):
     render_probability_bar(probs, show_draw=show_draw)
 
     # ── Recommandation pronostic ──
-    if sport == "football" and int(probs.get("history_matches", 0)) == 0:
-        st.info(
-            "Pronostic 1X2 non validé : aucun historique n'a entraîné le modèle."
-        )
-    else:
-        reco = get_recommendation(probs, sport, match)
-        render_recommendation(reco)
+    reco = get_recommendation(probs, sport, match)
+    render_recommendation(reco)
 
     # Les informations secondaires restent disponibles sans alourdir la carte.
     top_scores = probs.get("top_scores", [])

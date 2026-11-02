@@ -68,9 +68,29 @@ class FootballMarketsTests(unittest.TestCase):
         self.assertIn("Double chance X2", rendered_labels)
         self.assertIn("Double chance 12", rendered_labels)
         streamlit.caption.assert_any_call(
-            "Modèle sans historique : estimations indicatives, non validées et "
-            "à ne pas interpréter comme des conseils de pari."
+            "Modèle sans historique : estimations indicatives basées sur les "
+            "moyennes par défaut, à prendre avec prudence."
         )
+
+    def test_match_card_shows_prediction_without_training_history(self):
+        streamlit = MagicMock()
+        prediction = FootballModel().predict_prematch("Home", "Away")
+        match = {"home_team": "Home", "away_team": "Away"}
+
+        with (
+            patch.object(app, "st", streamlit),
+            patch.object(app, "WeatherClient") as weather_client,
+            patch.object(app, "render_probability_bar"),
+            patch.object(app, "render_football_market_forecasts"),
+            patch.object(app, "render_recommendation") as render_recommendation,
+        ):
+            weather_client.return_value.get_match_weather.return_value = None
+            app.render_match_card(match, prediction, sport="football")
+
+        render_recommendation.assert_called_once_with(
+            app.get_recommendation(prediction, "football", match)
+        )
+        streamlit.info.assert_not_called()
 
 
 if __name__ == "__main__":
