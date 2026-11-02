@@ -92,6 +92,26 @@ class FootballMarketsTests(unittest.TestCase):
         )
         streamlit.info.assert_not_called()
 
+    def test_basketball_probability_labels_are_not_rendered_as_html(self):
+        streamlit = MagicMock()
+        label_columns = [MagicMock(), MagicMock()]
+        streamlit.columns.return_value = label_columns
+
+        with patch.object(app, "st", streamlit):
+            app.render_probability_bar(
+                {"home_win": 0.58, "away_win": 0.42},
+                show_draw=False,
+            )
+
+        streamlit.columns.assert_called_once_with(2)
+        labels = [column.markdown.call_args.args[0] for column in label_columns]
+        self.assertEqual(labels, ["Dom. **58.0%**", "Ext. **42.0%**"])
+        rendered_html = streamlit.markdown.call_args.args[0]
+        self.assertNotIn("<span", rendered_html)
+        self.assertIn("prob-segment prob-home", rendered_html)
+        self.assertIn("prob-segment prob-away", rendered_html)
+        self.assertNotIn("prob-segment prob-draw", rendered_html)
+
 
 if __name__ == "__main__":
     unittest.main()

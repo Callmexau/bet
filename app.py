@@ -245,16 +245,6 @@ st.markdown("""
 
   /* ════ BARRES DE PROBABILITÉS ════ */
   .prob-bar-container { margin: 0.1rem 0 0.6rem; }
-  .prob-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.78rem;
-    font-weight: 600;
-    margin-bottom: 6px;
-  }
-  .prob-label-home  { color: var(--blue); }
-  .prob-label-draw  { color: var(--text-2); text-align:center; flex:1; }
-  .prob-label-away  { color: var(--orange); text-align:right; }
   .prob-bar-wrapper {
     display: flex;
     height: 8px;
@@ -680,22 +670,31 @@ def render_probability_bar(probs: dict, show_draw: bool = True):
     d_w    = round(d  / total * 100, 1)
     aw_w   = round(aw / total * 100, 1)
 
-    draw_segment = f'<div class="prob-segment prob-draw" style="width:{d_w}%"></div>' if show_draw else ''
+    labels = [
+        f"Dom. **{hw_pct:.1f}%**",
+        *([f"Nul **{d_pct:.1f}%**"] if show_draw else []),
+        f"Ext. **{aw_pct:.1f}%**",
+    ]
+    label_columns = st.columns(len(labels))
+    for column, label in zip(label_columns, labels):
+        column.markdown(label)
 
-    st.markdown(f"""
-    <div class="prob-bar-container">
-      <div class="prob-labels">
-        <span class="prob-label-home">Dom. {hw_pct}%</span>
-        {f'<span class="prob-label-draw">{d_pct}% Nul</span>' if show_draw else ''}
-        <span class="prob-label-away">{aw_pct}% Ext.</span>
-      </div>
-      <div class="prob-bar-wrapper">
-        <div class="prob-segment prob-home" style="width:{hw_w}%"></div>
-        {draw_segment}
-        <div class="prob-segment prob-away" style="width:{aw_w}%"></div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    segments = [
+        f'<div class="prob-segment prob-home" style="width:{hw_w}%"></div>',
+    ]
+    if show_draw:
+        segments.append(
+            f'<div class="prob-segment prob-draw" style="width:{d_w}%"></div>'
+        )
+    segments.append(
+        f'<div class="prob-segment prob-away" style="width:{aw_w}%"></div>'
+    )
+    bar_html = (
+        '<div class="prob-bar-container"><div class="prob-bar-wrapper">'
+        f'{"".join(segments)}'
+        "</div></div>"
+    )
+    st.markdown(bar_html, unsafe_allow_html=True)
 
 
 def render_football_market_forecasts(probs: dict) -> None:
