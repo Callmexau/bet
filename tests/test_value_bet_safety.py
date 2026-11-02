@@ -20,6 +20,17 @@ class ValueBetSafetyTests(unittest.TestCase):
 
         self.assertIsNone(conservative_match_ev(model, probs, odds_event))
 
+    def test_model_without_history_cannot_generate_an_automatic_value_signal(self):
+        model = FootballModel()
+        del model.history
+        odds_event = {
+            "avg_odds": {"home_win": 2.0, "draw": 3.5, "away_win": 4.0},
+            "best_odds": {"home_win": 2.1, "draw": 3.6, "away_win": 4.2},
+        }
+        probs = {"home_win": 0.6, "draw": 0.2, "away_win": 0.2}
+
+        self.assertIsNone(conservative_match_ev(model, probs, odds_event))
+
     def test_conservative_probabilities_shrink_model_edge_toward_market(self):
         model_probs = {
             "home_win": 0.70,

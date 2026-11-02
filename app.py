@@ -1006,7 +1006,13 @@ def get_odds_client() -> OddsClient:
 
 
 def conservative_match_ev(model: FootballModel, probs: dict, odds_event: dict) -> dict | None:
-    if len(model.history) < MIN_VALUE_BET_HISTORY:
+    history = getattr(model, "history", None)
+    if not isinstance(history, list):
+        logger.warning(
+            "Calcul EV prudent ignoré : historique du modèle football absent ou invalide."
+        )
+        return None
+    if len(history) < MIN_VALUE_BET_HISTORY:
         return None
     conservative_probs = model.conservative_probabilities(
         probs, odds_event.get("avg_odds", {})
