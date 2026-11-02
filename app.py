@@ -866,6 +866,12 @@ def build_probability_chart(history: list[dict], home_team: str, away_team: str,
 # Les modèles Elo SONT mis en cache car leur entraînement est coûteux.
 TRAINING_HISTORY_LIMIT = 5000
 FOOTBALL_PREMATCH_STATUSES = {"SCHEDULED", "TIMED"}
+MIN_VALUE_BET_HISTORY = 200
+MIN_RECOMMENDED_EV = 0.08
+MIN_VALUE_PROBABILITY = 0.65
+MAX_VALUE_ODDS = 1.80
+MAX_SINGLE_STAKE_FRACTION = 0.005
+MAX_PORTFOLIO_STAKE_FRACTION = 0.01
 
 def get_football_client() -> FootballClient:
     return FootballClient()
@@ -877,6 +883,28 @@ def get_basketball_client() -> BasketballClient:
 
 def get_odds_client() -> OddsClient:
     return OddsClient()
+
+
+def conservative_match_ev(model: FootballModel, probs: dict, odds_event: dict) -> dict | None:
+    if len(model.history) < MIN_VALUE_BET_HISTORY:
+        return None
+    conservative_probs = model.conservative_probabilities(
+        probs, odds_event.get("avg_odds", {})
+    )
+    if conservative_probs is None:
+        return None
+    return {
+        **model.compute_ev(conservative_probs, odds_event.get("best_odds", {})),
+        "probabilities": conservative_probs,
+    }
+
+
+def is_value_bet_eligible(probability: float, odds: float, ev: float, min_ev: float) -> bool:
+    return (
+        probability >= MIN_VALUE_PROBABILITY
+        and 1 < odds <= MAX_VALUE_ODDS
+        and ev >= min_ev
+    )
 
 
 def _training_history_json(sport: str) -> str:
@@ -1201,7 +1229,7 @@ def format_currency(amount: float | int, currency: str = "FCFA") -> str:
 def kelly_fraction(prob: float, odds: float, fraction: float = 0.25) -> float:
     """
     Calcule la fraction de bankroll à miser selon le critère de Kelly.
-    Utilise une fraction réduite (0.25 = quart-Kelly) pour limiter le risque.
+    Utilise le quart-Kelly et plafonne la mise à 0,5 % de la bankroll.
 
     Formule : f = (p × o - 1) / (o - 1)
     Quart-Kelly : f_q = f × fraction
@@ -1212,7 +1240,7 @@ def kelly_fraction(prob: float, odds: float, fraction: float = 0.25) -> float:
         fraction: réducteur de risque (0.25 = quart-Kelly recommandé)
 
     Returns:
-        Fraction de bankroll en % (0-100), ou 0 si mise déconseillée.
+        Fraction de bankroll en % (0-0,5), ou 0 si mise déconseillée.
     """
     if odds <= 1 or prob <= 0:
         return 0.0
@@ -1220,7 +1248,23 @@ def kelly_fraction(prob: float, odds: float, fraction: float = 0.25) -> float:
     if ev <= 0:
         return 0.0
     kelly = ev / (odds - 1)
-    return round(min(kelly * fraction * 100, 25.0), 1)  # Plafond 25% de bankroll
+    return round(min(kelly * fraction * 100, MAX_SINGLE_STAKE_FRACTION * 100), 2)
+
+
+def cap_portfolio_stakes(value_bets: list[dict], bankroll: float, currency: str) -> None:
+    portfolio_cap = bankroll * MAX_PORTFOLIO_STAKE_FRACTION
+    proposed_total = sum(v["stake"] for v in value_bets)
+    if proposed_total <= portfolio_cap or proposed_total <= 0:
+        return
+    scale = portfolio_cap / proposed_total
+    for value_bet in value_bets:
+        scaled_stake = value_bet["stake"] * scale
+        value_bet["stake"] = (
+            int(scaled_stake)
+            if currency == "FCFA"
+            else int(scaled_stake * 100) / 100
+        )
+        value_bet["kelly_pct"] = round(value_bet["stake"] / bankroll * 100, 2)
 
 
 def render_value_bets_tab():
@@ -1231,6 +1275,11 @@ def render_value_bets_tab():
     client  = get_football_client()
     model   = get_football_model()
     odds_cl = get_odds_client()
+    if len(model.history) < MIN_VALUE_BET_HISTORY:
+        st.info(
+            f"Les EV prudentes sont masquées : historique disponible "
+            f"{len(model.history)}/{MIN_VALUE_BET_HISTORY} matchs."
+        )
 
     currency = st.session_state.get("app_currency", "FCFA")
 
@@ -1264,15 +1313,16 @@ def render_value_bets_tab():
 
     with c_ctrl2:
         min_ev = st.slider(
-            "🎯 EV minimale (%)", min_value=1, max_value=20, value=3,
-            help="Afficher seulement les matchs avec une valeur espérée > ce seuil"
+            "🎯 EV prudente minimale (%)", min_value=5, max_value=20,
+            value=int(MIN_RECOMMENDED_EV * 100),
+            help="Seuil appliqué après rapprochement des probabilités du modèle et du marché"
         ) / 100
 
     # ── Calculateur rapide de cote Congobet ────────────────────────────────
     with st.expander("🧮 Calculateur de Value Bet Congobet (manuel)", expanded=False):
         st.markdown(
-            "<small style='color:#8b949e'>Testez une cote vue sur <strong>Congobet</strong> pour "
-            "calculer instantanément la valeur espérée (EV) et la mise conseillée en FCFA.</small>",
+            "<small style='color:#8b949e'>Estimation théorique à partir de la probabilité que vous saisissez. "
+            "Cette probabilité n'est pas vérifiée par le modèle.</small>",
             unsafe_allow_html=True
         )
         cc1, cc2, cc3 = st.columns([1, 1, 1.2])
@@ -1291,14 +1341,14 @@ def render_value_bets_tab():
             k_pct_manual = kelly_fraction(p_manual, cote_manual)
             raw_k = bankroll * k_pct_manual / 100
             if currency == "FCFA":
-                m_stake = int(round(raw_k / 50.0) * 50) if raw_k >= 100 else int(round(raw_k))
+                m_stake = int(raw_k // 50 * 50)
             else:
                 m_stake = round(raw_k, 2)
             stake_display = format_currency(m_stake, currency)
 
             if ev_manual > 0:
                 color_ev = "#39d353"
-                advice = f"✅ <strong>Value Bet !</strong> Mise conseillée : <strong style='color:#e3b341;'>{stake_display}</strong> ({k_pct_manual}% bankroll)"
+                advice = f"Probabilité saisie : EV positive. Mise théorique plafonnée à <strong style='color:#e3b341;'>{stake_display}</strong> ({k_pct_manual}% bankroll)."
             else:
                 color_ev = "#ff4757"
                 advice = "❌ <strong>Pas de value</strong> (EV négative). Éviter de miser."
@@ -1311,6 +1361,15 @@ def render_value_bets_tab():
             """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    if len(model.history) < MIN_VALUE_BET_HISTORY:
+        st.warning(
+            f"Mode prudent : les value bets automatiques sont désactivés tant que le modèle "
+            f"n'a pas au moins {MIN_VALUE_BET_HISTORY} matchs historiques. "
+            f"Historique disponible : {len(model.history)}. Importez des résultats puis "
+            "évaluez le modèle en backtest avant de vous fier à ses estimations."
+        )
+        return
 
     with st.spinner("📊 Analyse des cotes et calcul des EV..."):
         week_matches = client.get_week_matches(days=7)
@@ -1326,27 +1385,31 @@ def render_value_bets_tab():
         if not matched_odds:
             continue
         best_odds = matched_odds.get("best_odds", {})
-        ev_dict = model.compute_ev(probs, best_odds)
+        ev_dict = conservative_match_ev(model, probs, matched_odds)
+        if ev_dict is None:
+            continue
 
+        match_candidates = []
         for outcome in ("home_win", "draw", "away_win"):
             ev_val = ev_dict.get(outcome)
             odd_val = best_odds.get(outcome, 0)
-            prob_val = probs.get(outcome, 0)
-            if ev_val and ev_val >= min_ev and odd_val > 0:
+            prob_val = ev_dict["probabilities"].get(outcome, 0)
+            if ev_val is not None and is_value_bet_eligible(
+                prob_val, odd_val, ev_val, min_ev
+            ):
                 kelly_pct = kelly_fraction(prob_val, odd_val)
                 raw_stake = bankroll * kelly_pct / 100
                 if currency == "FCFA":
-                    # Arrondi au multiple de 50 FCFA le plus proche (mise min usuelle 100 FCFA)
-                    stake_val = int(round(raw_stake / 50.0) * 50) if raw_stake >= 100 else int(round(raw_stake))
+                    stake_val = int(raw_stake // 50 * 50)
                 else:
-                    stake_val = round(raw_stake, 2)
+                    stake_val = int(raw_stake * 100) / 100
 
                 outcome_label = {
                     "home_win": f"🏠 {match.get('home_team','?')}",
                     "draw":     "🤝 Nul",
                     "away_win": f"✈️ {match.get('away_team','?')}",
                 }[outcome]
-                value_bets.append({
+                match_candidates.append({
                     "match":        f"{match.get('home_team','?')} vs {match.get('away_team','?')}",
                     "competition":  match.get("competition", ""),
                     "date":         match.get("match_date", ""),
@@ -1355,12 +1418,17 @@ def render_value_bets_tab():
                     "ev":           ev_val,
                     "odd":          odd_val,
                     "prob":         prob_val,
+                    "model_prob":   probs.get(outcome, 0),
                     "kelly_pct":    kelly_pct,
                     "stake":        stake_val,
                 })
+        if match_candidates:
+            value_bets.append(max(match_candidates, key=lambda item: item["ev"]))
 
     # Tri par EV décroissante
     value_bets.sort(key=lambda x: x["ev"], reverse=True)
+    cap_portfolio_stakes(value_bets, bankroll, currency)
+    value_bets = [value_bet for value_bet in value_bets if value_bet["stake"] > 0]
 
     # KPIs
     n_vb = len(value_bets)
@@ -1400,9 +1468,18 @@ def render_value_bets_tab():
                     st.error(f"❌ {msg}")
 
     st.markdown("<br>", unsafe_allow_html=True)
+    st.caption(
+        "Probabilité prudente = 25 % estimation du modèle + 75 % consensus des cotes "
+        "moyennes sans marge. Filtre strict : probabilité ≥ 65 %, cote ≤ 1,80, "
+        "EV minimale par défaut : 8 %. "
+        "Cotes The Odds API à vérifier chez votre bookmaker ; aucun pari n'est garanti."
+    )
 
     if not value_bets:
-        st.info(f"🔍 Aucun value bet avec EV > {min_ev*100:.0f}% cette semaine. Essayez un seuil plus bas.")
+        st.info(
+            f"Aucun signal ne passe tous les critères : probabilité prudente ≥ "
+            f"{MIN_VALUE_PROBABILITY:.0%}, cote ≤ {MAX_VALUE_ODDS:.2f} et EV ≥ {min_ev:.0%}."
+        )
         return
 
     st.markdown(f"### 🔥 {n_vb} Value Bet{'s' if n_vb > 1 else ''} détecté{'' if n_vb == 1 else 's'}")
@@ -1413,9 +1490,9 @@ def render_value_bets_tab():
         prob_pct = round(vb["prob"] * 100, 1)
         stake_str = format_currency(vb["stake"], currency)
         kelly_str = (
-            f"Mise conseillée : <strong style='color:#e3b341'>"
+            f"Mise plafonnée : <strong style='color:#e3b341'>"
             f"{vb['kelly_pct']}% → {stake_str}</strong> "
-            f"(quart-Kelly sur {bankroll_str})"
+            f"(quart-Kelly, max. 0,5 % par pari ; 1 % au total)"
             if vb["kelly_pct"] > 0 else "Mise non conseillée"
         )
         col_vb_card, col_vb_btn = st.columns([5, 1])
@@ -1430,8 +1507,9 @@ def render_value_bets_tab():
                 <div class="vb-kelly">{kelly_str}</div>
               </div>
               <div style="text-align:right;min-width:80px;">
-                <div style="color:#8b949e;font-size:0.72rem;">Prob modèle</div>
+                <div style="color:#8b949e;font-size:0.72rem;">Prob. prudente</div>
                 <div style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">{prob_pct}%</div>
+                <div style="color:#8b949e;font-size:0.68rem;">Modèle : {vb['model_prob']*100:.1f}%</div>
               </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1624,6 +1702,11 @@ def render_calendar_tab():
     model   = get_football_model()
     odds_cl = get_odds_client()
     odds_available = odds_cl._is_available()
+    if len(model.history) < MIN_VALUE_BET_HISTORY:
+        st.info(
+            f"Les EV du calendrier sont masquées : historique disponible "
+            f"{len(model.history)}/{MIN_VALUE_BET_HISTORY} matchs."
+        )
 
     # Navigation semaine
     today = date.today()
@@ -1682,8 +1765,9 @@ def render_calendar_tab():
             if all_odds_flat:
                 mo = odds_cl.match_odds_to_match(m, all_odds_flat)
                 if mo:
-                    ev_d = model.compute_ev(probs, mo.get("best_odds", {}))
-                    best_ev = max(best_ev, ev_d.get("best_ev") or 0)
+                    ev_d = conservative_match_ev(model, probs, mo)
+                    if ev_d:
+                        best_ev = max(best_ev, ev_d.get("best_ev") or 0)
         ev_by_date[d_str] = best_ev
 
     # ── Grille calendrier ─────────────────────────────────────────────────
@@ -1701,7 +1785,7 @@ def render_calendar_tab():
         best_ev = ev_by_date.get(d_str, 0)
 
         is_today = (d == today)
-        has_value = best_ev > 0.03
+        has_value = best_ev >= MIN_RECOMMENDED_EV
         cell_class = "cal-cell today" if is_today else ("cal-cell has-value" if has_value else "cal-cell")
 
         # Badges matchs
@@ -1715,8 +1799,8 @@ def render_calendar_tab():
             badges += f'<div class="cal-badge low">+{n_matches-3} matchs</div>'
 
         ev_indicator = ""
-        if best_ev > 0.03:
-            ev_indicator = f'<div style="color:#39d353;font-size:0.65rem;font-weight:700;">EV +{round(best_ev*100,1)}%</div>'
+        if best_ev >= MIN_RECOMMENDED_EV:
+            ev_indicator = f'<div style="color:#39d353;font-size:0.65rem;font-weight:700;">EV prudente +{round(best_ev*100,1)}%</div>'
 
         cell_style = "cursor:pointer;"
         cells_html += (
@@ -1760,7 +1844,10 @@ def render_calendar_tab():
                     mo = odds_cl.match_odds_to_match(match, all_odds_flat)
                     if mo:
                         odds = mo.get("best_odds", {})
-                        ev = model.compute_ev(probs, odds)
+                        ev = conservative_match_ev(model, probs, mo)
+                        if ev is None:
+                            st.caption("EV prudente indisponible : historique insuffisant.")
+                            continue
                         ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
                             render_ev_badge(ev.get("home_win"), "1"),
                             render_ev_badge(ev.get("draw"), "X"),
@@ -1769,7 +1856,7 @@ def render_calendar_tab():
                         best_ev_val = ev.get("best_ev", 0) or 0
                         best_k = ev.get("best", "")
                         kelly_pct = kelly_fraction(
-                            probs.get(best_k, 0),
+                            ev["probabilities"].get(best_k, 0),
                             odds.get(best_k, 0)
                         ) if best_k else 0
                         kelly_html = ""
@@ -1780,7 +1867,7 @@ def render_calendar_tab():
                             )
                         st.markdown(f"""
                         <div style="margin:-0.5rem 0 0.5rem;font-size:0.82rem;">
-                          EV: {ev_badges}<br>{kelly_html}
+                          EV prudente: {ev_badges}<br>{kelly_html}
                         </div>
                         """, unsafe_allow_html=True)
                         st.markdown("---")
@@ -1791,7 +1878,7 @@ def render_ev_badge(ev_val: float | None, label: str) -> str:
     """Retourne un badge HTML coloré selon la valeur EV."""
     if ev_val is None:
         return ""
-    if ev_val > 0.05:
+    if ev_val >= MIN_RECOMMENDED_EV:
         color = "#39d353"  # Vert vif = Value !
         icon = "🔥"
     elif ev_val > 0:
@@ -1917,7 +2004,10 @@ def render_week_tab():
                     matched_odds = odds_cl.match_odds_to_match(match, all_odds_flat)
                     if matched_odds:
                         odds = matched_odds.get("best_odds", {})
-                        ev = model.compute_ev(probs, odds)
+                        ev = conservative_match_ev(model, probs, matched_odds)
+                        if ev is None:
+                            st.caption("EV prudente indisponible : historique insuffisant.")
+                            continue
 
                         # Affichage cotes + EV
                         ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
@@ -1928,12 +2018,12 @@ def render_week_tab():
 
                         best_ev = ev.get("best_ev", 0)
                         value_alert = ""
-                        if best_ev and best_ev > 0.05:
+                        if best_ev and best_ev >= MIN_RECOMMENDED_EV:
                             outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
                             value_alert = f"""
                             <div style="background:rgba(57,211,83,0.1);border:1px solid #39d353;
                                         border-radius:8px;padding:0.5rem 0.8rem;margin-top:0.4rem;text-align:center;">
-                              🔥 <strong style="color:#39d353;">VALUE BET détectée!</strong>
+                              🔥 <strong style="color:#39d353;">Signal de valeur prudent</strong>
                               <span style="color:#f0f6fc;font-size:0.85rem;">
                                 {outcome_label.get(ev.get('best'), '?')} @ {odds.get(ev.get('best', ''), 0):.2f}
                                 (EV: +{round(best_ev * 100, 1)}%)
@@ -1949,13 +2039,13 @@ def render_week_tab():
                             <span style="color:#f0f6fc;">2: {odds.get('away_win', 0):.2f}</span>
                             <small style="color:#8b949e;">({matched_odds.get('n_bookmakers', '?')} bookmakers)</small>
                           </div>
-                          <div style="font-size:0.82rem;">EV: {ev_badges}</div>
+                          <div style="font-size:0.82rem;">EV prudente: {ev_badges}</div>
                         </div>
                         """, unsafe_allow_html=True)
 
                         # Value alert dans son propre st.markdown (evite conflit triple-quotes)
                         best_ev = ev.get("best_ev", 0)
-                        if best_ev and best_ev > 0.05:
+                        if best_ev and best_ev >= MIN_RECOMMENDED_EV:
                             outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
                             pick      = outcome_label.get(ev.get("best", ""), "?")
                             odd_val   = odds.get(ev.get("best", ""), 0)
@@ -1964,7 +2054,7 @@ def render_week_tab():
                                 f'<div style="background:rgba(45,202,86,0.12);border:1.5px solid #2dca56;'
                                 f'border-radius:12px;padding:0.7rem 1rem;margin-bottom:0.4rem;text-align:center;">'
                                 f'<div style="font-size:1rem;font-weight:700;color:var(--green);">'
-                                f'\U0001f525 VALUE BET &mdash; Miser sur {pick} @ {odd_val:.2f}</div>'
+                                f'\U0001f525 Signal prudent &mdash; {pick} @ {odd_val:.2f}</div>'
                                 f'<div style="font-size:0.78rem;color:rgba(45,202,86,0.8);">'
                                 f'EV +{ev_pct}% · {matched_odds.get("n_bookmakers","?")}</div></div>',
                                 unsafe_allow_html=True,

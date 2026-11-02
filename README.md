@@ -106,6 +106,19 @@ cotes moyennes d'ouverture importées et du seuil EV par défaut de 3 %. C'est u
 simulation historique, pas une promesse de rendement ; les résultats dépendent
 des fichiers et des cotes effectivement disponibles.
 
+### Garde-fous des Value Bets
+
+Les Value Bets automatiques restent désactivés tant que l'historique local ne
+contient pas au moins 200 matchs terminés. Une fois ce seuil atteint, la probabilité
+utilisée pour l'EV combine 25 % du modèle et 75 % du consensus des cotes moyennes
+après retrait de la marge bookmaker. Le seuil EV par défaut est de 8 %.
+Le filtre strict exige aussi une probabilité prudente d'au moins 65 % et une cote
+maximale de 1,80.
+Les mises suggérées sont limitées à 0,5 % de la bankroll par pari et à 1 % au total,
+avec au plus une sélection par match. Ces seuils limitent l'exposition mais ne
+garantissent ni la rentabilité ni un taux de réussite supérieur ; vérifiez les cotes
+réellement proposées et le ROI/Brier du backtest avant de miser.
+
 ### Backtest
 
 Après avoir importé ou accumulé des données :

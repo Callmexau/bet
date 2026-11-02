@@ -341,6 +341,53 @@ class FootballModel:
         ev["best_ev"] = max(valid.values()) if valid else None
         return ev
 
+    @staticmethod
+    def market_implied_probabilities(average_odds: dict) -> dict[str, float] | None:
+        """Convertit les cotes moyennes 1X2 en probabilités sans marge."""
+        outcomes = ("home_win", "draw", "away_win")
+        try:
+            odds_values = {outcome: float(average_odds[outcome]) for outcome in outcomes}
+        except (KeyError, TypeError, ValueError):
+            return None
+        if any(not math.isfinite(value) or value <= 1 for value in odds_values.values()):
+            return None
+        inverse_odds = {outcome: 1.0 / value for outcome, value in odds_values.items()}
+        total = sum(inverse_odds.values())
+        if total <= 0:
+            return None
+        return {outcome: value / total for outcome, value in inverse_odds.items()}
+
+    @classmethod
+    def conservative_probabilities(
+        cls,
+        model_probs: dict,
+        average_odds: dict,
+        model_weight: float = 0.25,
+    ) -> dict[str, float] | None:
+        """Réduit l'écart du modèle au marché pour limiter les faux avantages."""
+        if not 0 <= model_weight <= 1:
+            raise ValueError("model_weight must be between 0 and 1")
+        market_probs = cls.market_implied_probabilities(average_odds)
+        if market_probs is None:
+            return None
+        outcomes = ("home_win", "draw", "away_win")
+        try:
+            model_values = {outcome: float(model_probs[outcome]) for outcome in outcomes}
+        except (KeyError, TypeError, ValueError):
+            return None
+        if any(not math.isfinite(value) or value < 0 or value > 1 for value in model_values.values()):
+            return None
+        model_total = sum(model_values.values())
+        if model_total <= 0:
+            return None
+        return {
+            outcome: (
+                model_weight * model_values[outcome] / model_total
+                + (1 - model_weight) * market_probs[outcome]
+            )
+            for outcome in outcomes
+        }
+
     # ── Entraînement ──────────────────────────────────────────────────────
 
     def train(self, matches: list[dict], *, tune: bool = False, calibrate: bool = True) -> "FootballModel":
