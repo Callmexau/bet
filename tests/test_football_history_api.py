@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import db
@@ -105,6 +106,39 @@ class FootballHistoryApiTests(unittest.TestCase):
 
         get_client.return_value.sync_competition_history.assert_called_once_with()
         train.assert_called_once_with(refreshed_history)
+        self.assertEqual(model, "trained")
+
+    def test_model_uses_compatibility_sync_when_client_method_is_missing(self):
+        api_match = {
+            "id": 101,
+            "home_team": "Home",
+            "away_team": "Away",
+            "home_score": 2,
+            "away_score": 1,
+            "match_date": "2025-08-15",
+            "competition": "Premier League",
+        }
+        client = SimpleNamespace(
+            api_key="test-key",
+            headers={},
+            _safe_request=lambda *args, **kwargs: {
+                "matches": [{
+                    "status": "FINISHED",
+                    "id": 101,
+                }],
+            },
+            _normalize_match=lambda _: api_match,
+        )
+        with (
+            patch.object(app, "get_football_client", return_value=client),
+            patch.object(app, "_train_football_model", return_value="trained") as train,
+        ):
+            model = app.get_football_model()
+
+        train.assert_called_once()
+        training_history = json.loads(train.call_args.args[0])
+        self.assertEqual(len(training_history), 1)
+        self.assertEqual(training_history[0]["home_team"], "Home")
         self.assertEqual(model, "trained")
 
 
