@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import MagicMock, patch
 
+import app
 from app import (
     cap_portfolio_stakes,
     conservative_match_ev,
@@ -30,6 +32,20 @@ class ValueBetSafetyTests(unittest.TestCase):
         probs = {"home_win": 0.6, "draw": 0.2, "away_win": 0.2}
 
         self.assertIsNone(conservative_match_ev(model, probs, odds_event))
+
+    def test_value_bets_tab_handles_model_without_history(self):
+        model = FootballModel()
+        del model.history
+        odds_client = MagicMock()
+        odds_client._is_available.return_value = False
+
+        with (
+            patch.object(app, "get_football_client"),
+            patch.object(app, "get_football_model", return_value=model),
+            patch.object(app, "get_odds_client", return_value=odds_client),
+            patch.object(app, "st", MagicMock()),
+        ):
+            app.render_value_bets_tab()
 
     def test_conservative_probabilities_shrink_model_edge_toward_market(self):
         model_probs = {

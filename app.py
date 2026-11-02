@@ -1000,14 +1000,18 @@ def get_odds_client() -> OddsClient:
     return OddsClient()
 
 
-def conservative_match_ev(model: FootballModel, probs: dict, odds_event: dict) -> dict | None:
+def football_history_count(model: FootballModel) -> int:
     history = getattr(model, "history", None)
     if not isinstance(history, list):
         logger.warning(
-            "Calcul EV prudent ignoré : historique du modèle football absent ou invalide."
+            "Historique du modèle football absent ou invalide ; compté comme vide."
         )
-        return None
-    if len(history) < MIN_VALUE_BET_HISTORY:
+        return 0
+    return len(history)
+
+
+def conservative_match_ev(model: FootballModel, probs: dict, odds_event: dict) -> dict | None:
+    if football_history_count(model) < MIN_VALUE_BET_HISTORY:
         return None
     conservative_probs = model.conservative_probabilities(
         probs, odds_event.get("avg_odds", {})
@@ -1416,10 +1420,11 @@ def render_value_bets_tab():
     client  = get_football_client()
     model   = get_football_model()
     odds_cl = get_odds_client()
-    if len(model.history) < MIN_VALUE_BET_HISTORY:
+    history_count = football_history_count(model)
+    if history_count < MIN_VALUE_BET_HISTORY:
         st.info(
             f"Les EV prudentes sont masquées : historique disponible "
-            f"{len(model.history)}/{MIN_VALUE_BET_HISTORY} matchs."
+            f"{history_count}/{MIN_VALUE_BET_HISTORY} matchs."
         )
 
     currency = st.session_state.get("app_currency", "FCFA")
@@ -1503,11 +1508,11 @@ def render_value_bets_tab():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if len(model.history) < MIN_VALUE_BET_HISTORY:
+    if history_count < MIN_VALUE_BET_HISTORY:
         st.warning(
             f"Mode prudent : les value bets automatiques sont désactivés tant que le modèle "
             f"n'a pas au moins {MIN_VALUE_BET_HISTORY} matchs historiques. "
-            f"Historique disponible : {len(model.history)}. Importez des résultats puis "
+            f"Historique disponible : {history_count}. Importez des résultats puis "
             "évaluez le modèle en backtest avant de vous fier à ses estimations."
         )
         return
@@ -1843,10 +1848,11 @@ def render_calendar_tab():
     model   = get_football_model()
     odds_cl = get_odds_client()
     odds_available = odds_cl._is_available()
-    if len(model.history) < MIN_VALUE_BET_HISTORY:
+    history_count = football_history_count(model)
+    if history_count < MIN_VALUE_BET_HISTORY:
         st.info(
             f"Les EV du calendrier sont masquées : historique disponible "
-            f"{len(model.history)}/{MIN_VALUE_BET_HISTORY} matchs."
+            f"{history_count}/{MIN_VALUE_BET_HISTORY} matchs."
         )
 
     # Navigation semaine
