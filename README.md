@@ -119,6 +119,21 @@ avec au plus une sélection par match. Ces seuils limitent l'exposition mais ne
 garantissent ni la rentabilité ni un taux de réussite supérieur ; vérifiez les cotes
 réellement proposées et le ROI/Brier du backtest avant de miser.
 
+### Météo des matchs de football
+
+L'application peut afficher la prévision horaire Open-Meteo pour un match dont
+l'API fournit une heure de coup d'envoi et un nom de stade que le géocodeur retrouve
+sans ambiguïté. Les prévisions sont mises en cache. Si le stade ne peut pas être
+identifié ou si aucune prévision n'est disponible, aucune météo n'est affichée.
+L'accès gratuit Open-Meteo est limité à un usage non commercial et ses conditions
+ainsi que l'attribution CC BY 4.0 s'appliquent.
+
+La météo est affichée comme contexte uniquement : elle n'ajuste pas les probabilités,
+car le projet ne possède pas encore d'historique météo lié aux scores pour valider
+cet effet. Les blessures, suspensions et compositions ne sont pas incluses : aucune
+source gratuite et vérifiée couvrant ces données n'est configurée. Les compositions
+peuvent en outre ne devenir disponibles que peu avant le coup d'envoi.
+
 ### Backtest
 
 Après avoir importé ou accumulé des données :

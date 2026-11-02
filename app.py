@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # ── Imports locaux ─────────────────────────────────────────────────────────
 from data_client import FootballClient, BasketballClient, OddsClient
+from weather_client import WeatherClient
 from models.football import FootballModel
 from models.basketball import BasketballModel
 from db import (
@@ -714,6 +715,21 @@ def render_match_card(match: dict, probs: dict, sport: str):
     </div>
     """, unsafe_allow_html=True)
 
+    if sport == "football":
+        weather = WeatherClient().get_match_weather(match)
+        if weather:
+            weather_parts = [weather["condition"]]
+            if weather["temperature"] is not None:
+                weather_parts.append(f"{weather['temperature']} °C")
+            if weather["precipitation_probability"] is not None:
+                weather_parts.append(f"pluie {weather['precipitation_probability']} %")
+            if weather["wind_kmh"] is not None:
+                weather_parts.append(f"vent {weather['wind_kmh']} km/h")
+            st.caption(
+                f"Météo prévue · {' · '.join(weather_parts)} · Open-Meteo. "
+                "Information indicative, non intégrée aux probabilités du modèle."
+            )
+
     # Barres de probabilités (hors du HTML pour Streamlit)
     show_draw = (sport == "football")
     render_probability_bar(probs, show_draw=show_draw)
@@ -1035,6 +1051,12 @@ def render_football_tab():
 
     with st.spinner("⚽ Chargement des matchs de football..."):
         matches = client.get_today_matches()
+
+    st.caption(
+        "Les blessures, suspensions et compositions ne sont pas couvertes par les "
+        "sources actuellement configurées. La météo, lorsqu'elle est disponible, "
+        "est informative et n'ajuste pas encore les probabilités."
+    )
 
     if not matches:
         st.markdown("""

@@ -143,6 +143,8 @@ class FootballClient(BaseClient):
             "match_date": raw.get("utcDate", "")[:10],
             "competition": raw.get("competition", {}).get("name", ""),
             "competition_code": raw.get("competition", {}).get("code", ""),
+            "venue": raw.get("venue", ""),
+            "kickoff_utc": raw.get("utcDate", ""),
             "red_cards_home": self._count_cards(raw, "home", "RED"),
             "red_cards_away": self._count_cards(raw, "away", "RED"),
             "raw": raw,
