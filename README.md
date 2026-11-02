@@ -97,6 +97,11 @@ Les cotes moyennes d'ouverture sont utilisées par le ROI simulé ; les cotes de
 clôture présentes dans les CSV sont également conservées avec le match. Les
 compétitions et saisons disponibles varient selon le site et le fichier.
 
+Avec une clé `FOOTBALL_DATA_API_KEY`, l'application récupère et met en cache les
+résultats terminés disponibles pour les compétitions suivies lorsque la base contient
+moins de 200 matchs. Les données accessibles par l'API dépendent de votre offre et
+peuvent se limiter à la saison en cours. Pour entraîner le modèle sur plusieurs
+saisons ou obtenir davantage de matchs, importez les CSV comme indiqué ci-dessus.
 Après l'import, relancez Streamlit : le modèle se réentraîne lorsque l'historique
 change. Le modèle utilise au maximum ses 5 000 matchs les plus récents par sport.
 Lancez ensuite le backtest pour vérifier la qualité prédictive avant de vous fier

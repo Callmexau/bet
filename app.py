@@ -1052,7 +1052,11 @@ def _train_football_model(history_json: str) -> FootballModel:
 
 
 def get_football_model() -> FootballModel:
-    return _train_football_model(_training_history_json("football"))
+    history_json = _training_history_json("football")
+    if len(json.loads(history_json)) < MIN_VALUE_BET_HISTORY:
+        get_football_client().sync_competition_history()
+        history_json = _training_history_json("football")
+    return _train_football_model(history_json)
 
 
 @st.cache_resource(show_spinner=False, max_entries=2)

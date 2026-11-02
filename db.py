@@ -160,15 +160,16 @@ def save_match(match: dict, sport: str):
     save_matches([match], sport)
 
 
-def save_matches(matches: list[dict], sport: str):
+def save_matches(matches: list[dict], sport: str, *, replace: bool = True):
     """Persiste plusieurs matchs dans une transaction."""
     if not matches:
         return
 
+    insert_mode = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
     with managed_connection() as conn:
         conn.executemany(
-            """
-            INSERT OR REPLACE INTO match_history
+            f"""
+            {insert_mode} INTO match_history
                 (id, sport, home_team, away_team, home_score, away_score, match_date, competition, raw_data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,

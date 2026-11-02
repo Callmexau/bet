@@ -11,7 +11,7 @@ import requests
 from datetime import date, datetime, timedelta
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
-from db import cache_get, cache_set, save_match, CACHE_TTL
+from db import cache_get, cache_set, save_match, save_matches, CACHE_TTL
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -33,6 +33,9 @@ FOOTBALL_COMPETITIONS = [
     "WC",   # Coupe du Monde (FIFA World Cup)
     "CAN",  # Coupe d'Afrique des Nations (CAF)
 ]
+FOOTBALL_HISTORY_COMPETITIONS = tuple(
+    competition for competition in FOOTBALL_COMPETITIONS if competition != "CAN"
+)
 
 # ─────────────────────────── Classe de base ────────────────────────────────
 
@@ -340,6 +343,55 @@ class FootballClient(BaseClient):
             cache_set(cache_key, matches, ttl=CACHE_TTL["history"])
             return matches
         return []
+
+    def get_competition_history(self, competition_code: str) -> list[dict]:
+        """Récupère et persiste les résultats terminés d'une compétition."""
+        code = competition_code.upper()
+        if code not in FOOTBALL_HISTORY_COMPETITIONS:
+            return []
+
+        cache_key = f"football:competition_history:{code}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        url = f"{FOOTBALL_BASE_URL}/competitions/{code}/matches"
+        data = self._safe_request(
+            url,
+            headers=self.headers,
+            params={"status": "FINISHED"},
+        )
+        if data is None or "matches" not in data:
+            cache_set(cache_key, [], ttl=CACHE_TTL["history"])
+            return []
+
+        matches = []
+        for raw_match in data["matches"]:
+            if raw_match.get("status") != "FINISHED":
+                continue
+            match = self._normalize_match(raw_match)
+            if match["home_score"] is not None and match["away_score"] is not None:
+                matches.append(match)
+
+        if matches:
+            save_matches(matches, "football", replace=False)
+        cache_set(cache_key, matches, ttl=CACHE_TTL["history"])
+        logger.info(
+            "Football: %d résultats historiques récupérés pour %s",
+            len(matches),
+            code,
+        )
+        return matches
+
+    def sync_competition_history(self) -> int:
+        """Synchronise les résultats disponibles des compétitions suivies."""
+        if not self.api_key:
+            return 0
+
+        return sum(
+            len(self.get_competition_history(code))
+            for code in FOOTBALL_HISTORY_COMPETITIONS
+        )
 
 
 # ──────────────────────── Client Basketball ────────────────────────────────
