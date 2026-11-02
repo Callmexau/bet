@@ -773,6 +773,20 @@ class OddsClient(BaseClient):
             oh = odds_event.get("home_team", "").lower()
             oa = odds_event.get("away_team", "").lower()
 
+            match_time = (
+                match.get("kickoff_utc")
+                or match.get("match_date")
+            )
+            odds_time = odds_event.get("commence_time")
+            match_date = self._event_date(match_time)
+            odds_date = self._event_date(odds_time)
+            if (
+                match_date is not None
+                and odds_date is not None
+                and abs((match_date - odds_date).days) > 1
+            ):
+                continue
+
             # Score de similarité simple basé sur les mots communs
             score = self._name_similarity(home, oh) + self._name_similarity(away, oa)
 
@@ -783,6 +797,21 @@ class OddsClient(BaseClient):
         if best_score >= threshold:
             return best_match
         return None
+
+    @staticmethod
+    def _event_date(value: str | None) -> date | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return date.fromisoformat(value[:10])
+            except ValueError:
+                return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.date()
 
     @staticmethod
     def _name_similarity(name_a: str, name_b: str) -> float:

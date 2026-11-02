@@ -11,6 +11,7 @@ Lancement : streamlit run app.py
 import time
 import logging
 import json
+import math
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 # ── Imports locaux ─────────────────────────────────────────────────────────
 from data_client import (
     FootballClient, BasketballClient, OddsClient, FOOTBALL_HISTORY_COMPETITIONS,
+    FOOTBALL_TO_ODDS_KEY,
     LIVE_REFRESH_INTERVAL_SECONDS, UPCOMING_REFRESH_INTERVAL_SECONDS,
     is_live_match, match_list_refresh_interval_seconds,
 )
@@ -783,8 +785,8 @@ def render_football_market_forecasts(probs: dict) -> None:
             st.metric(label, f"{float(markets.get(key, 0)):.1%}")
 
     st.caption(
-        "Ces marchés affichent des probabilités du modèle, pas des cotes ni une "
-        "value bet. Les cotes de buts/BTTS ne sont pas intégrées."
+        "1X2 et double chance utilisent le mélange indiqué sur la carte ; buts et "
+        "BTTS restent calculés par le modèle, sans intégration de leurs cotes."
     )
 
 
@@ -868,6 +870,8 @@ def render_match_card(match: dict, probs: dict, sport: str):
     # Barres de probabilités (hors du HTML pour Streamlit)
     show_draw = (sport == "football")
     render_probability_bar(probs, show_draw=show_draw)
+    if probs.get("probability_source"):
+        st.caption(f"Probabilités avant-match · {probs['probability_source']}.")
 
     # ── Recommandation pronostic ──
     reco = get_recommendation(probs, sport, match)
@@ -1004,12 +1008,39 @@ MIN_VALUE_PROBABILITY = 0.65
 MAX_VALUE_ODDS = 1.80
 MAX_SINGLE_STAKE_FRACTION = 0.005
 MAX_PORTFOLIO_STAKE_FRACTION = 0.01
+MODEL_MARKET_WEIGHT = 0.25
 
 
 def _track_matches_for_refresh(matches: list[dict]) -> None:
     st.session_state.setdefault("refresh_matches", []).extend(matches)
     if any(is_live_match(match) for match in matches):
         st.session_state["has_live_matches"] = True
+
+
+def _is_prematch_match(match: dict, sport: str) -> bool:
+    if is_live_match(match) or match.get("status") in ("Final", "FINISHED"):
+        return False
+    if sport == "football":
+        return match.get("status") in FOOTBALL_PREMATCH_STATUSES
+    return not match.get("period")
+
+
+def get_football_odds_for_matches(
+    odds_client: OddsClient, matches: list[dict]
+) -> list[dict]:
+    if not odds_client._is_available():
+        return []
+    competition_codes = {
+        str(match.get("competition_code", "")).upper()
+        for match in matches
+        if _is_prematch_match(match, "football")
+    }
+    odds_events = []
+    for code in sorted(competition_codes):
+        sport_key = FOOTBALL_TO_ODDS_KEY.get(code)
+        if sport_key:
+            odds_events.extend(odds_client.get_odds_for_sport(sport_key))
+    return odds_events
 
 
 def get_football_client() -> FootballClient:
@@ -1046,6 +1077,78 @@ def conservative_match_ev(model: FootballModel, probs: dict, odds_event: dict) -
         **model.compute_ev(conservative_probs, odds_event.get("best_odds", {})),
         "probabilities": conservative_probs,
     }
+
+
+def blend_prematch_probabilities(
+    model_probs: dict,
+    odds_event: dict | None,
+    sport: str,
+    model_weight: float = MODEL_MARKET_WEIGHT,
+) -> dict:
+    """Blend valid model probabilities with de-vigged bookmaker probabilities."""
+    if not math.isfinite(model_weight) or not 0 <= model_weight <= 1:
+        raise ValueError("model_weight must be between 0 and 1")
+    outcomes = (
+        ("home_win", "draw", "away_win")
+        if sport == "football"
+        else ("home_win", "away_win")
+    )
+    if odds_event is None:
+        return {
+            **model_probs,
+            "probability_source": "Modèle seul · cotes indisponibles",
+        }
+
+    try:
+        odds = {outcome: float(odds_event["avg_odds"][outcome]) for outcome in outcomes}
+        model = {outcome: float(model_probs[outcome]) for outcome in outcomes}
+    except (KeyError, TypeError, ValueError):
+        return {
+            **model_probs,
+            "probability_source": "Modèle seul · cotes incomplètes",
+        }
+
+    if (
+        any(not math.isfinite(value) or value <= 1 for value in odds.values())
+        or any(not math.isfinite(value) or value < 0 or value > 1 for value in model.values())
+    ):
+        return {
+            **model_probs,
+            "probability_source": "Modèle seul · cotes invalides",
+        }
+
+    model_total = sum(model.values())
+    inverse_odds = {outcome: 1 / value for outcome, value in odds.items()}
+    market_total = sum(inverse_odds.values())
+    if model_total <= 0 or market_total <= 0:
+        return {
+            **model_probs,
+            "probability_source": "Modèle seul · probabilités invalides",
+        }
+
+    combined = {
+        outcome: (
+            model_weight * model[outcome] / model_total
+            + (1 - model_weight) * inverse_odds[outcome] / market_total
+        )
+        for outcome in outcomes
+    }
+    result = {**model_probs, **combined}
+    if sport == "basketball":
+        result["draw"] = 0.0
+    if sport == "football":
+        markets = dict(model_probs.get("markets") or {})
+        markets.update({
+            "dc_1x": combined["home_win"] + combined["draw"],
+            "dc_x2": combined["draw"] + combined["away_win"],
+            "dc_12": combined["home_win"] + combined["away_win"],
+        })
+        result["markets"] = markets
+
+    result["probability_source"] = (
+        f"Modèle {model_weight:.0%} + marché sans marge {1 - model_weight:.0%}"
+    )
+    return result
 
 
 def is_value_bet_eligible(probability: float, odds: float, ev: float, min_ev: float) -> bool:
@@ -1187,7 +1290,7 @@ def render_sidebar():
         )
         st.markdown(
             f"{'✅' if odds_key else '⚠️'} **The Odds API** "
-            f"{'(cotes actives)' if odds_key else '(optionnelle — EV désactivé)'}"
+            f"{'(marché intégré)' if odds_key else '(optionnelle — modèle seul)'}"
         )
         st.markdown(
             f"{'✅' if bball_key else '⚠️'} **balldontlie** "
@@ -1220,6 +1323,7 @@ def render_sidebar():
 def render_football_tab(model: FootballModel):
     """Affiche le contenu de l'onglet Football."""
     client = get_football_client()
+    odds_cl = get_odds_client()
 
     with st.spinner("⚽ Chargement des matchs de football..."):
         matches = client.get_today_matches()
@@ -1240,6 +1344,8 @@ def render_football_tab(model: FootballModel):
         </div>
         """, unsafe_allow_html=True)
         return
+
+    all_odds_flat = get_football_odds_for_matches(odds_cl, matches)
 
     # L'API peut classer un match à venir comme SCHEDULED ou TIMED.
     status_order = {"IN_PLAY": 0, "PAUSED": 1, "TIMED": 2, "SCHEDULED": 2, "FINISHED": 3}
@@ -1289,6 +1395,9 @@ def render_football_tab(model: FootballModel):
     for i, match in enumerate(display_matches):
         with cols[i % 2]:
             probs = model.predict(match)
+            if _is_prematch_match(match, "football"):
+                matched_odds = odds_cl.match_odds_to_match(match, all_odds_flat)
+                probs = blend_prematch_probabilities(probs, matched_odds, "football")
 
             # Sauvegarde des prédictions pour analyse
             if match.get("status") in FOOTBALL_PREMATCH_STATUSES:
@@ -1321,6 +1430,7 @@ def render_football_tab(model: FootballModel):
 def render_basketball_tab():
     """Affiche le contenu de l'onglet Basketball."""
     client = get_basketball_client()
+    odds_cl = get_odds_client()
 
     with st.spinner("🏀 Chargement des matchs NBA..."):
         matches = client.get_today_matches()
@@ -1336,6 +1446,15 @@ def render_basketball_tab():
         </div>
         """, unsafe_allow_html=True)
         return
+
+    has_upcoming_games = any(
+        _is_prematch_match(match, "basketball") for match in matches
+    )
+    basketball_odds = (
+        odds_cl.get_basketball_odds()
+        if has_upcoming_games and odds_cl._is_available()
+        else []
+    )
 
     history = _fetch_basketball_history(client, matches)
     model = get_basketball_model(history)
@@ -1384,6 +1503,11 @@ def render_basketball_tab():
     for i, match in enumerate(display_matches):
         with cols[i % 2]:
             probs = model.predict(match)
+            if _is_prematch_match(match, "basketball"):
+                matched_odds = odds_cl.match_odds_to_match(match, basketball_odds)
+                probs = blend_prematch_probabilities(
+                    probs, matched_odds, "basketball"
+                )
 
             if not match.get("period") and match.get("status") != "Final":
                 save_prediction(str(match["id"]), "basketball", None, probs)
@@ -1574,8 +1698,7 @@ def render_value_bets_tab(model: FootballModel):
 
     with st.spinner("📊 Analyse des cotes et calcul des EV..."):
         week_matches = client.get_week_matches(days=7)
-        odds_by_comp = odds_cl.get_football_odds()
-        all_odds_flat = [ev for evs in odds_by_comp.values() for ev in evs]
+        all_odds_flat = get_football_odds_for_matches(odds_cl, week_matches)
 
     value_bets = []
     for match in week_matches:
@@ -1901,7 +2024,6 @@ def render_calendar_tab(model: FootballModel):
 
     client  = get_football_client()
     odds_cl = get_odds_client()
-    odds_available = odds_cl._is_available()
     history_count = football_history_count(model)
     if history_count < MIN_VALUE_BET_HISTORY:
         st.info(
@@ -1939,10 +2061,7 @@ def render_calendar_tab(model: FootballModel):
         all_matches = client.get_week_matches(days=14)  # 2 semaines de tampon
 
     # Récupérer les cotes si dispo
-    all_odds_flat = []
-    if odds_available:
-        odds_by_comp = odds_cl.get_football_odds()
-        all_odds_flat = [ev for evs in odds_by_comp.values() for ev in evs]
+    all_odds_flat = get_football_odds_for_matches(odds_cl, all_matches)
 
     # Indexer les matchs par date
     matches_by_date = defaultdict(list)
@@ -2038,40 +2157,47 @@ def render_calendar_tab(model: FootballModel):
         cols = st.columns(2, gap="medium")
         for i, match in enumerate(day_m):
             with cols[i % 2]:
-                probs = model.predict(match)
+                model_probs = model.predict(match)
+                matched_odds = (
+                    odds_cl.match_odds_to_match(match, all_odds_flat)
+                    if all_odds_flat and _is_prematch_match(match, "football")
+                    else None
+                )
+                probs = model_probs
+                if _is_prematch_match(match, "football"):
+                    probs = blend_prematch_probabilities(
+                        model_probs, matched_odds, "football"
+                    )
                 render_match_card(match, probs, sport="football")
                 # Cotes + EV si dispo
-                if all_odds_flat:
-                    mo = odds_cl.match_odds_to_match(match, all_odds_flat)
-                    if mo:
-                        odds = mo.get("best_odds", {})
-                        ev = conservative_match_ev(model, probs, mo)
-                        if ev is None:
-                            st.caption("EV prudente indisponible : historique insuffisant.")
-                            continue
-                        ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
-                            render_ev_badge(ev.get("home_win"), "1"),
-                            render_ev_badge(ev.get("draw"), "X"),
-                            render_ev_badge(ev.get("away_win"), "2"),
-                        ]))
-                        best_ev_val = ev.get("best_ev", 0) or 0
-                        best_k = ev.get("best", "")
-                        kelly_pct = kelly_fraction(
-                            ev["probabilities"].get(best_k, 0),
-                            odds.get(best_k, 0)
-                        ) if best_k else 0
-                        kelly_html = ""
-                        if kelly_pct > 0:
-                            kelly_html = (
-                                f'<span style="color:#e3b341;font-size:0.78rem;">'
-                                f"💰 Kelly: {kelly_pct}% de bankroll</span>"
-                            )
-                        st.markdown(f"""
-                        <div style="margin:-0.5rem 0 0.5rem;font-size:0.82rem;">
-                          EV prudente: {ev_badges}<br>{kelly_html}
-                        </div>
-                        """, unsafe_allow_html=True)
-                        st.markdown("---")
+                if matched_odds:
+                    odds = matched_odds.get("best_odds", {})
+                    ev = conservative_match_ev(model, model_probs, matched_odds)
+                    if ev is None:
+                        st.caption("EV prudente indisponible : historique insuffisant.")
+                        continue
+                    ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
+                        render_ev_badge(ev.get("home_win"), "1"),
+                        render_ev_badge(ev.get("draw"), "X"),
+                        render_ev_badge(ev.get("away_win"), "2"),
+                    ]))
+                    best_k = ev.get("best", "")
+                    kelly_pct = kelly_fraction(
+                        ev["probabilities"].get(best_k, 0),
+                        odds.get(best_k, 0)
+                    ) if best_k else 0
+                    kelly_html = ""
+                    if kelly_pct > 0:
+                        kelly_html = (
+                            f'<span style="color:#e3b341;font-size:0.78rem;">'
+                            f"💰 Kelly: {kelly_pct}% de bankroll</span>"
+                        )
+                    st.markdown(f"""
+                    <div style="margin:-0.5rem 0 0.5rem;font-size:0.82rem;">
+                      EV prudente: {ev_badges}<br>{kelly_html}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    st.markdown("---")
 
 
 
@@ -2110,12 +2236,11 @@ def render_week_tab(model: FootballModel):
 
     # Récupérer les cotes si l'API Odds est configurée
     odds_available = odds_cl._is_available()
-    all_odds_flat = []
     if odds_available:
         with st.spinner("📊 Récupération des cotes bookmakers..."):
-            odds_by_comp = odds_cl.get_football_odds()
-            for events in odds_by_comp.values():
-                all_odds_flat.extend(events)
+            all_odds_flat = get_football_odds_for_matches(odds_cl, week_matches)
+    else:
+        all_odds_flat = []
 
     if not week_matches:
         st.markdown("""
@@ -2197,31 +2322,39 @@ def render_week_tab(model: FootballModel):
 
         for i, match in enumerate(day_matches):
             with cols[i % 2]:
-                probs = model.predict(match)
+                model_probs = model.predict(match)
+                matched_odds = (
+                    odds_cl.match_odds_to_match(match, all_odds_flat)
+                    if all_odds_flat and _is_prematch_match(match, "football")
+                    else None
+                )
+                probs = model_probs
+                if _is_prematch_match(match, "football"):
+                    probs = blend_prematch_probabilities(
+                        model_probs, matched_odds, "football"
+                    )
                 render_match_card(match, probs, sport="football")
 
                 # Chercher les cotes correspondantes et calculer l'EV
-                if all_odds_flat:
-                    matched_odds = odds_cl.match_odds_to_match(match, all_odds_flat)
-                    if matched_odds:
-                        odds = matched_odds.get("best_odds", {})
-                        ev = conservative_match_ev(model, probs, matched_odds)
-                        if ev is None:
-                            st.caption("EV prudente indisponible : historique insuffisant.")
-                            continue
+                if matched_odds:
+                    odds = matched_odds.get("best_odds", {})
+                    ev = conservative_match_ev(model, model_probs, matched_odds)
+                    if ev is None:
+                        st.caption("EV prudente indisponible : historique insuffisant.")
+                        continue
 
-                        # Affichage cotes + EV
-                        ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
-                            render_ev_badge(ev.get("home_win"), "1"),
-                            render_ev_badge(ev.get("draw"), "X"),
-                            render_ev_badge(ev.get("away_win"), "2"),
-                        ]))
+                    # Affichage cotes + EV
+                    ev_badges = " &nbsp;|&nbsp; ".join(filter(None, [
+                        render_ev_badge(ev.get("home_win"), "1"),
+                        render_ev_badge(ev.get("draw"), "X"),
+                        render_ev_badge(ev.get("away_win"), "2"),
+                    ]))
 
-                        best_ev = ev.get("best_ev", 0)
-                        value_alert = ""
-                        if best_ev and best_ev >= MIN_RECOMMENDED_EV:
-                            outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
-                            value_alert = f"""
+                    best_ev = ev.get("best_ev", 0)
+                    value_alert = ""
+                    if best_ev and best_ev >= MIN_RECOMMENDED_EV:
+                        outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
+                        value_alert = f"""
                             <div style="background:rgba(57,211,83,0.1);border:1px solid #39d353;
                                         border-radius:8px;padding:0.5rem 0.8rem;margin-top:0.4rem;text-align:center;">
                               🔥 <strong style="color:#39d353;">Signal de valeur prudent</strong>
@@ -2232,7 +2365,7 @@ def render_week_tab(model: FootballModel):
                             </div>
                             """
 
-                        st.markdown(f"""
+                    st.markdown(f"""
                         <div style="margin:-0.5rem 0 0.4rem;">
                           <div style="font-size:0.78rem;color:#8b949e;margin-bottom:0.3rem;">&#x1F4B0; Meilleures cotes:
                             <span style="color:#f0f6fc;">1: {odds.get('home_win', 0):.2f}</span> |
@@ -2244,24 +2377,24 @@ def render_week_tab(model: FootballModel):
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Value alert dans son propre st.markdown (evite conflit triple-quotes)
-                        best_ev = ev.get("best_ev", 0)
-                        if best_ev and best_ev >= MIN_RECOMMENDED_EV:
-                            outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
-                            pick      = outcome_label.get(ev.get("best", ""), "?")
-                            odd_val   = odds.get(ev.get("best", ""), 0)
-                            ev_pct    = round(best_ev * 100, 1)
-                            st.markdown(
-                                f'<div style="background:rgba(45,202,86,0.12);border:1.5px solid #2dca56;'
-                                f'border-radius:12px;padding:0.7rem 1rem;margin-bottom:0.4rem;text-align:center;">'
-                                f'<div style="font-size:1rem;font-weight:700;color:var(--green);">'
-                                f'\U0001f525 Signal prudent &mdash; {pick} @ {odd_val:.2f}</div>'
-                                f'<div style="font-size:0.78rem;color:rgba(45,202,86,0.8);">'
-                                f'EV +{ev_pct}% · {matched_odds.get("n_bookmakers","?")}</div></div>',
-                                unsafe_allow_html=True,
-                            )
+                    # Value alert dans son propre st.markdown (evite conflit triple-quotes)
+                    best_ev = ev.get("best_ev", 0)
+                    if best_ev and best_ev >= MIN_RECOMMENDED_EV:
+                        outcome_label = {"home_win": "Domicile", "draw": "Nul", "away_win": "Extérieur"}
+                        pick      = outcome_label.get(ev.get("best", ""), "?")
+                        odd_val   = odds.get(ev.get("best", ""), 0)
+                        ev_pct    = round(best_ev * 100, 1)
+                        st.markdown(
+                            f'<div style="background:rgba(45,202,86,0.12);border:1.5px solid #2dca56;'
+                            f'border-radius:12px;padding:0.7rem 1rem;margin-bottom:0.4rem;text-align:center;">'
+                            f'<div style="font-size:1rem;font-weight:700;color:var(--green);">'
+                            f'\U0001f525 Signal prudent &mdash; {pick} @ {odd_val:.2f}</div>'
+                            f'<div style="font-size:0.78rem;color:rgba(45,202,86,0.8);">'
+                            f'EV +{ev_pct}% · {matched_odds.get("n_bookmakers","?")}</div></div>',
+                            unsafe_allow_html=True,
+                        )
 
-                        st.markdown("---")
+                    st.markdown("---")
 
 
 

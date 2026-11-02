@@ -4,12 +4,78 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import app
-from data_client import BasketballClient
+from data_client import BasketballClient, OddsClient
 from models.basketball import BasketballModel
 from models.football import FootballModel
 
 
 class PredictionBiasTests(unittest.TestCase):
+    def test_football_prematch_blends_model_and_no_vig_market_probabilities(self):
+        model_probs = {
+            "home_win": 0.70,
+            "draw": 0.20,
+            "away_win": 0.10,
+            "markets": {},
+        }
+        odds_event = {
+            "avg_odds": {
+                "home_win": 4.0,
+                "draw": 2.0,
+                "away_win": 2.0,
+            },
+        }
+
+        combined = app.blend_prematch_probabilities(
+            model_probs, odds_event, "football"
+        )
+
+        self.assertAlmostEqual(
+            sum(combined[outcome] for outcome in ("home_win", "draw", "away_win")),
+            1.0,
+        )
+        self.assertAlmostEqual(combined["home_win"], 0.325)
+        self.assertAlmostEqual(combined["draw"], 0.35)
+        self.assertAlmostEqual(combined["markets"]["dc_1x"], 0.675)
+        self.assertIn("marché sans marge 75%", combined["probability_source"])
+
+    def test_basketball_prematch_blends_two_way_market_probabilities(self):
+        combined = app.blend_prematch_probabilities(
+            {"home_win": 0.5, "draw": 0.0, "away_win": 0.5},
+            {"avg_odds": {"home_win": 2.0, "away_win": 4.0}},
+            "basketball",
+        )
+
+        self.assertAlmostEqual(combined["home_win"], 0.625)
+        self.assertAlmostEqual(combined["away_win"], 0.375)
+        self.assertEqual(combined["draw"], 0.0)
+
+    def test_missing_market_prices_keep_model_probabilities_and_explain_source(self):
+        model_probs = {"home_win": 0.6, "draw": 0.25, "away_win": 0.15}
+
+        combined = app.blend_prematch_probabilities(
+            model_probs, None, "football"
+        )
+
+        self.assertEqual(
+            {key: combined[key] for key in model_probs},
+            model_probs,
+        )
+        self.assertIn("Modèle seul", combined["probability_source"])
+
+    def test_odds_matcher_rejects_same_teams_on_different_dates(self):
+        match = {
+            "home_team": "Home United",
+            "away_team": "Away City",
+            "match_date": "2026-11-02",
+        }
+        odds_events = [{
+            "home_team": "Home United",
+            "away_team": "Away City",
+            "commence_time": "2026-11-12T19:00:00Z",
+        }]
+
+        self.assertIsNone(OddsClient().match_odds_to_match(match, odds_events))
+
     def test_untrained_models_do_not_automatically_favor_the_home_team(self):
         basketball = BasketballModel()
         home_prediction = basketball.predict_prematch("Home", "Away")

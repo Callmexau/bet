@@ -11,7 +11,7 @@ avec des probabilités de victoire calculées par des modèles ML, mises à jour
 |---|---|
 | ⚽ **Football** | Premier League, La Liga, Ligue 1, Bundesliga, Serie A, Champions League, Coupe du Monde, CAN |
 | 🏀 **Basketball** | Matchs NBA du jour |
-| 📊 **Avant-match** | 1X2 + buts Over/Under 1.5, 2.5, 3.5 + BTTS + double chance (foot) ; Elo + loi normale (basket) |
+| 📊 **Avant-match** | 1X2 combine modèle et marché sans marge (si cotes disponibles) ; buts/BTTS/double chance (foot) ; Elo + loi normale (basket) |
 | 🔴 **En direct** | Ajustement par score, minute, cartons rouges |
 | 📈 **Graphique** | Évolution des probabilités pendant le match |
 | 🔄 **Auto-refresh** | Mise à jour automatique toutes les 30 secondes |
@@ -59,6 +59,9 @@ FOOTBALL_DATA_API_KEY=votre_clé_ici
 
 # Balldontlie n'a pas besoin de clé API pour le plan gratuit
 BALLDONTLIE_API_KEY=
+
+# The Odds API (optionnelle ; nécessaire pour combiner modèle et marché)
+ODDS_API_KEY=
 ```
 
 ### 5. Lancer l'application
@@ -142,11 +145,19 @@ peuvent en outre ne devenir disponibles que peu avant le coup d'envoi.
 
 ### Marchés de pronostics football
 
-Chaque carte football affiche désormais les probabilités modélisées pour les lignes
-de buts Over/Under 1.5, 2.5 et 3.5, les deux équipes marquent (BTTS), ainsi que
-les doubles chances 1X, X2 et 12. Les buts attendus par équipe sont également
-affichés quand le modèle les calcule. Les scores exacts les plus probables restent
-dans les détails du match.
+Avec une clé `ODDS_API_KEY` et des cotes correspondantes, les probabilités 1X2
+d'avant-match pour le football et la NBA combinent 25 % du modèle et 75 % des
+probabilités du marché après retrait de la marge bookmaker. La carte indique la
+source utilisée ; si les cotes sont absentes, incomplètes ou ne correspondent pas au
+match, elle conserve le modèle seul et le signale. Cette pondération est indicative,
+pas une calibration validée ni une garantie de précision.
+
+Les cartes football affichent aussi les probabilités modélisées pour les lignes de
+buts Over/Under 1.5, 2.5 et 3.5, les deux équipes marquent (BTTS), ainsi que les
+doubles chances 1X, X2 et 12. Les doubles chances suivent le 1X2 combiné ; les
+marchés de buts et BTTS restent ceux du modèle. Les buts attendus par équipe sont
+également affichés quand le modèle les calcule. Les scores exacts les plus probables
+restent dans les détails du match.
 
 Ces nombres sont des estimations statistiques et ne sont pas des cotes ni des
 Value Bets : l'intégration actuelle de The Odds API ne récupère que le marché
