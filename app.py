@@ -99,13 +99,13 @@ st.markdown("""
   /* ════ Header ════ */
   .main-header {
     text-align: left;
-    padding: 0.8rem 0 1rem;
+    padding: 0.4rem 0 0.65rem;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 0.8rem;
+    margin-bottom: 0.55rem;
   }
   h1.main-title {
-    font-size: 1.8rem !important;
-    font-weight: 700 !important;
+    font-size: 1.5rem !important;
+    font-weight: 650 !important;
     line-height: 1.2 !important;
     color: var(--text-0);
     margin: 0;
@@ -121,20 +121,16 @@ st.markdown("""
 
   /* ════ Avertissement ════ */
   .warning-banner {
-    background: rgba(217,182,111,0.06);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--yellow);
-    border-radius: var(--radius-sm);
-    padding: 0.55rem 0.8rem;
-    margin-bottom: 0.7rem;
+    color: var(--text-2);
+    padding: 0.15rem 0;
+    margin-bottom: 0.4rem;
     text-align: left;
-    color: var(--text-1);
-    font-size: 0.8rem;
+    font-size: 0.72rem;
   }
 
   /* ════ Onglets ════ */
   .stTabs [data-baseweb="tab-list"] {
-    gap: 0.2rem;
+    gap: 0.1rem;
     background: transparent;
     border-bottom: 1px solid var(--border);
     padding: 0;
@@ -144,8 +140,8 @@ st.markdown("""
     border-radius: 0;
     color: var(--text-2);
     font-weight: 500;
-    font-size: 0.82rem;
-    padding: 0.55rem 0.8rem;
+    font-size: 0.78rem;
+    padding: 0.5rem 0.65rem;
   }
   .stTabs [aria-selected="true"] {
     color: var(--text-0) !important;
@@ -159,8 +155,8 @@ st.markdown("""
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 1rem 1.1rem 0.8rem;
-    margin-bottom: 0.6rem;
+    padding: 0.8rem 0.9rem 0.65rem;
+    margin-bottom: 0.45rem;
     position: relative;
     overflow: hidden;
   }
@@ -201,9 +197,8 @@ st.markdown("""
     width: 6px; height: 6px;
     background: white;
     border-radius: 50%;
-    animation: blink 1s infinite;
+    animation: none;
   }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
   /* Équipes + score */
   .teams-row {
@@ -211,7 +206,7 @@ st.markdown("""
     align-items: center;
     justify-content: space-between;
     gap: 0.8rem;
-    margin-bottom: 1.1rem;
+    margin-bottom: 0.75rem;
   }
   .team-name {
     font-size: 0.98rem;
@@ -247,7 +242,7 @@ st.markdown("""
   }
 
   /* ════ BARRES DE PROBABILITÉS ════ */
-  .prob-bar-container { margin: 0.2rem 0 0.9rem; }
+  .prob-bar-container { margin: 0.1rem 0 0.6rem; }
   .prob-labels {
     display: flex;
     justify-content: space-between;
@@ -271,7 +266,7 @@ st.markdown("""
   .prob-segment {
     height: 100%;
     border-radius: 3px;
-    transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+    transition: none;
   }
   .prob-home { background: #659fc8; }
   .prob-draw { background: #707b86; }
@@ -281,8 +276,8 @@ st.markdown("""
   .reco-banner {
     width: 100%;
     border-radius: var(--radius-md);
-    padding: 0.65rem 0.85rem;
-    margin: 0.15rem 0 0.55rem;
+    padding: 0.5rem 0.65rem;
+    margin: 0.1rem 0 0.4rem;
     display: flex;
     flex-direction: column;
     gap: 3px;
@@ -394,11 +389,11 @@ st.markdown("""
   /* ════ Empty state ════ */
   .empty-state {
     text-align: center;
-    padding: 4rem 2rem;
+    padding: 1.5rem 1rem;
     color: var(--text-2);
   }
-  .empty-icon { font-size: 3.5rem; margin-bottom: 1rem; opacity: 0.7; }
-  .empty-text { font-size: 1rem; line-height: 1.6; }
+  .empty-icon { font-size: 2rem; margin-bottom: 0.4rem; opacity: 0.55; }
+  .empty-text { font-size: 0.9rem; line-height: 1.5; }
 
   /* ════ Value Bets rows ════ */
   .vb-row {
@@ -418,7 +413,7 @@ st.markdown("""
   .vb-row.top   {
     border-color: var(--green);
     background: var(--green-dim);
-    box-shadow: 0 0 16px rgba(45,202,86,0.12);
+    box-shadow: none;
   }
   .vb-ev    { font-size:1.5rem; font-weight:750; color:var(--green); min-width:64px; text-align:center; }
   .vb-teams { flex:1; min-width:160px; }
@@ -483,15 +478,67 @@ st.markdown("""
   }
 
   @media (max-width: 700px) {
-    .block-container { padding: 0.5rem 0.8rem 1rem !important; }
-    .main-header { padding: 0.45rem 0 0.75rem; }
-    h1.main-title { font-size: 1.5rem !important; }
-    .warning-banner { font-size: 0.74rem; }
-    .stTabs [data-baseweb="tab"] { font-size: 0.75rem; padding: 0.5rem 0.55rem; }
+    html, body, .stApp { max-width: 100%; overflow-x: hidden; }
+    .block-container {
+      max-width: 100vw;
+      padding: 2rem 0.65rem calc(1rem + env(safe-area-inset-bottom)) !important;
+    }
+    .main-header { padding: 0.3rem 0 0.45rem; }
+    h1.main-title { font-size: 1.3rem !important; }
+    .warning-banner { font-size: 0.68rem; }
+    .stTabs [data-baseweb="tab-list"] {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      scroll-snap-type: x proximity;
+    }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+    .stTabs [data-baseweb="tab"] {
+      min-height: 44px;
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      padding: 0.5rem 0.6rem;
+      scroll-snap-align: start;
+    }
+    div[data-testid="stHorizontalBlock"] {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+      flex: 1 1 calc(50% - 0.5rem) !important;
+      width: calc(50% - 0.5rem) !important;
+      min-width: calc(50% - 0.5rem) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.match-card) > div[data-testid="column"] {
+      flex: 1 1 100% !important;
+      width: 100% !important;
+      min-width: 100% !important;
+    }
     .match-card { padding: 0.8rem; }
-    .team-name { font-size: 0.84rem; }
-    .score-box { min-width: 64px; padding: 0.4rem 0.55rem; }
+    .teams-row { gap: 0.4rem; }
+    .team-name {
+      min-width: 0;
+      font-size: 0.84rem;
+      overflow-wrap: anywhere;
+    }
+    .score-box { min-width: 64px; padding: 0.4rem 0.5rem; }
     .score-text { font-size: 1.2rem; }
+    button, [role="button"], input, select, textarea {
+      min-height: 44px;
+    }
+    [data-testid="stDataFrame"], [data-testid="stTable"] { overflow-x: auto; }
+    [data-testid="stPlotlyChart"] { max-width: 100%; overflow: hidden; }
+    .empty-state { padding: 1rem 0.5rem; }
+    .empty-icon { font-size: 1.6rem; margin-bottom: 0.25rem; }
+  }
+
+  @media (max-width: 380px) {
+    .block-container {
+      padding-right: 0.5rem !important;
+      padding-left: 0.5rem !important;
+    }
+    .stTabs [data-baseweb="tab"] { padding-right: 0.45rem; padding-left: 0.45rem; }
+    .score-box { min-width: 58px; }
   }
 
   /* ════ Inputs Streamlit ════ */
@@ -538,9 +585,9 @@ def get_recommendation(probs: dict, sport: str, match: dict, odds: dict | None =
     away = match.get("away_team", "Extérieur")
 
     outcome_labels = {
-        "home_win": f"🏠 {home}",
-        "draw":     "🤝 Nul",
-        "away_win": f"✈️ {away}",
+        "home_win": home,
+        "draw":     "Nul",
+        "away_win": away,
     }
     probs_map = {"home_win": hw, "draw": d, "away_win": aw}
 
@@ -607,15 +654,12 @@ def render_recommendation(reco: dict):
     reason  = reco["reason"]
     ev_part = f" · EV <strong>+{round(reco['ev']*100,1)}%</strong>" if reco.get("ev") else ""
 
-    icon_map = {"strong": "🔥", "medium": "✅", "low": "⚠️", "skip": "⏸️"}
-    icon = icon_map.get(level, "🔵")
-
     verb = "Passer" if level == "skip" else "Pronostic :"
 
     st.markdown(f"""
     <div class="reco-banner reco-{level}">
-      <div class="reco-title">{icon} {verb} {label}</div>
-      <div class="reco-sub">Estimation du modèle : {conf}%{ev_part} · {reason}</div>
+      <div class="reco-title">{verb} {label}</div>
+      <div class="reco-sub">{conf}% estimés{ev_part} · {reason}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -634,15 +678,14 @@ def render_probability_bar(probs: dict, show_draw: bool = True):
     d_w    = round(d  / total * 100, 1)
     aw_w   = round(aw / total * 100, 1)
 
-    draw_label   = f'<span class="prob-label-draw">{d_pct}% N</span>' if show_draw else ''
     draw_segment = f'<div class="prob-segment prob-draw" style="width:{d_w}%"></div>' if show_draw else ''
 
     st.markdown(f"""
     <div class="prob-bar-container">
       <div class="prob-labels">
-        <span class="prob-label-home">🏠 {hw_pct}%</span>
-        {draw_label}
-        <span class="prob-label-away">{aw_pct}% ✈️</span>
+        <span class="prob-label-home">Dom. {hw_pct}%</span>
+        {f'<span class="prob-label-draw">{d_pct}% Nul</span>' if show_draw else ''}
+        <span class="prob-label-away">{aw_pct}% Ext.</span>
       </div>
       <div class="prob-bar-wrapper">
         <div class="prob-segment prob-home" style="width:{hw_w}%"></div>
@@ -745,14 +788,14 @@ def render_match_card(match: dict, probs: dict, sport: str):
 
     # Minute / période
     if sport == "football":
-        minute_display = f"{match.get('minute', '?')}'" if is_live else "⏰"
+        minute_display = f"{match.get('minute', '?')}'" if is_live else "À venir"
     else:
         period = match.get("period", 0)
         time_str = match.get("time", "")
         if period > 0:
             minute_display = f"Q{period} {time_str}" if time_str else f"Q{period}"
         else:
-            minute_display = "⏰"
+            minute_display = "À venir"
 
     live_badge = '<span class="live-badge"><span class="live-dot"></span>LIVE</span>' if is_live else ""
     card_class = "match-card live" if is_live else "match-card"
@@ -820,17 +863,22 @@ def render_match_card(match: dict, probs: dict, sport: str):
     # Les informations secondaires restent disponibles sans alourdir la carte.
     top_scores = probs.get("top_scores", [])
     markets = probs.get("markets")
-    if sport == "football":
-        render_football_market_forecasts(probs)
-
     if top_scores or markets or model_type or elo_info:
-        with st.expander("Scores probables et détails du modèle", expanded=False):
+        expander_label = (
+            "Buts & détails du modèle"
+            if sport == "football"
+            else "Détails du match"
+        )
+        with st.expander(expander_label, expanded=False):
             details = [model_type]
             if elo_info:
                 details.append(elo_info)
             if match_date:
                 details.append(match_date)
             st.caption(" · ".join(details))
+
+            if sport == "football":
+                render_football_market_forecasts(probs)
 
             if top_scores:
                 scores_html = " ".join(
@@ -1115,7 +1163,6 @@ def render_football_tab():
     if not matches:
         st.markdown("""
         <div class="empty-state">
-          <div class="empty-icon">⚽</div>
           <div class="empty-text">Aucun match de football aujourd'hui<br>
           <small style="color:#8b949e">Vérifiez votre clé API football-data.org dans le fichier .env</small>
           </div>
@@ -1134,7 +1181,7 @@ def render_football_tab():
     with col_filter2:
         available_comps = sorted(list({m.get("competition", "") for m in matches if m.get("competition")}))
         selected_comp = st.selectbox(
-            "🏆 Filtrer par compétition",
+            "Compétition",
             options=["Toutes les compétitions"] + available_comps,
             index=0,
             key="foot_comp_filter"
@@ -1149,10 +1196,10 @@ def render_football_tab():
 
     # Métriques rapides
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🔴 En direct", len(live_matches))
-    c2.metric("🕐 Programmés", len(scheduled))
-    c3.metric("✅ Terminés", len(finished))
-    c4.metric("📋 Total", len(matches))
+    c1.metric("En direct", len(live_matches))
+    c2.metric("Programmés", len(scheduled))
+    c3.metric("Terminés", len(finished))
+    c4.metric("Total", len(matches))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1211,7 +1258,6 @@ def render_basketball_tab():
     if not matches:
         st.markdown("""
         <div class="empty-state">
-          <div class="empty-icon">🏀</div>
           <div class="empty-text">Aucun match NBA aujourd'hui<br>
           <small style="color:#8b949e">L'API balldontlie ne nécessite pas de clé API (plan gratuit).<br>
           Vérifiez votre connexion internet.</small>
@@ -1239,10 +1285,10 @@ def render_basketball_tab():
     show_finished = st.checkbox("Afficher les matchs terminés", value=False, key="bask_finished")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🔴 En direct", len(live_matches))
-    c2.metric("🕐 Programmés", len(scheduled))
-    c3.metric("✅ Terminés", len(finished))
-    c4.metric("📋 Total", len(matches))
+    c1.metric("En direct", len(live_matches))
+    c2.metric("Programmés", len(scheduled))
+    c3.metric("Terminés", len(finished))
+    c4.metric("Total", len(matches))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2392,34 +2438,30 @@ def main():
     st.markdown("""
     <div class="main-header">
       <h1 class="main-title">SportsPredikt</h1>
-      <p class="main-subtitle">Pronostics football et basketball · données actualisées automatiquement</p>
     </div>
     """, unsafe_allow_html=True)
 
     # ── Avertissement légal ────────────────────────────────────────────────
     st.markdown("""
     <div class="warning-banner">
-      ⚠️ <strong>AVERTISSEMENT :</strong> Les probabilités affichées sont <em>indicatives</em>
-      et basées sur des modèles statistiques. <strong>Aucun résultat n'est garanti.</strong>
-      Cette application ne constitue pas un conseil en paris sportifs.
+      Estimations indicatives · Aucun résultat garanti · Pas un conseil de pari.
     </div>
     """, unsafe_allow_html=True)
 
     # ── Rafraîchissement automatique ───────────────────────────────────────
     refresh_col1, refresh_col2 = st.columns([1, 1])
     with refresh_col1:
-        auto_refresh = st.toggle("🔄 Auto-refresh", value=True, key="auto_refresh")
+        auto_refresh = st.toggle("Actualisation auto", value=True, key="auto_refresh")
     with refresh_col2:
         last_update = st.empty()
         last_update.markdown(
-            f"<small style='color:#8b949e'>Mis à jour à {datetime.now().strftime('%H:%M:%S')}</small>",
+            f"<small style='color:#8b949e'>Actualisé à {datetime.now().strftime('%H:%M')}</small>",
             unsafe_allow_html=True
         )
 
     # ── Onglets principaux ─────────────────────────────────────────────────
     tab_foot, tab_bask, tab_week, tab_vb, tab_bets, tab_cal, tab_perf = st.tabs(
-        ["⚽ Football", "🏀 Basketball",
-         "📅 Semaine", "🔥 Value Bets", "💼 Mes Paris", "🗓️ Calendrier", "📊 Performance"]
+        ["Football", "Basket", "Semaine", "Value bets", "Mes paris", "Calendrier", "Bilan"]
     )
 
     with tab_foot:

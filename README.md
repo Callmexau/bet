@@ -15,6 +15,7 @@ avec des probabilités de victoire calculées par des modèles ML, mises à jour
 | 🔴 **En direct** | Ajustement par score, minute, cartons rouges |
 | 📈 **Graphique** | Évolution des probabilités pendant le match |
 | 🔄 **Auto-refresh** | Mise à jour automatique toutes les 30 secondes |
+| 📱 **Mobile-first** | Interface responsive, cartes sur une colonne et commandes tactiles adaptées |
 | 💾 **Cache SQLite** | Limite les appels API (TTL configurable) |
 | 🧪 **Backtest** | Walk-forward sur les 200 derniers matchs |
 
