@@ -30,14 +30,12 @@ logger = logging.getLogger(__name__)
 # ── Imports locaux ─────────────────────────────────────────────────────────
 from data_client import (
     FootballClient, BasketballClient, OddsClient,
-    FOOTBALL_BASE_URL, FOOTBALL_COMPETITIONS,
 )
 from weather_client import WeatherClient
 from models.football import FootballModel
 from models.basketball import BasketballModel
 from db import (
-    save_prediction, get_history_from_db, save_matches,
-    cache_get, cache_set, CACHE_TTL,
+    save_prediction, get_history_from_db,
     add_bet, get_bets, settle_bet, delete_bet, get_bankroll_stats
 )
 from telegram_alert import send_value_bets_alert, is_telegram_configured
@@ -1058,43 +1056,13 @@ def _train_football_model(history_json: str) -> FootballModel:
 def _sync_football_history() -> None:
     client = get_football_client()
     sync_history = getattr(client, "sync_competition_history", None)
-    if callable(sync_history):
-        sync_history()
+    if not callable(sync_history):
+        logger.warning(
+            "Synchronisation de l'historique indisponible dans cette version "
+            "de FootballClient."
+        )
         return
-
-    logger.warning(
-        "FootballClient sans sync_competition_history ; "
-        "utilisation du synchroniseur de compatibilité."
-    )
-    if not client.api_key:
-        return
-
-    for code in FOOTBALL_COMPETITIONS:
-        if code == "CAN":
-            continue
-
-        cache_key = f"football:competition_history:{code}"
-        matches = cache_get(cache_key)
-        if matches is None:
-            data = client._safe_request(
-                f"{FOOTBALL_BASE_URL}/competitions/{code}/matches",
-                headers=client.headers,
-                params={"status": "FINISHED"},
-            )
-            if data is None or "matches" not in data:
-                cache_set(cache_key, [], ttl=CACHE_TTL["history"])
-                continue
-
-            matches = []
-            for raw_match in data["matches"]:
-                if raw_match.get("status") != "FINISHED":
-                    continue
-                match = client._normalize_match(raw_match)
-                if match["home_score"] is not None and match["away_score"] is not None:
-                    matches.append(match)
-            if matches:
-                save_matches(matches, "football", replace=False)
-            cache_set(cache_key, matches, ttl=CACHE_TTL["history"])
+    sync_history()
 
 
 def get_football_model() -> FootballModel:
