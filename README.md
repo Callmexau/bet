@@ -11,7 +11,7 @@ avec des probabilités de victoire calculées par des modèles ML, mises à jour
 |---|---|
 | ⚽ **Football** | Premier League, La Liga, Ligue 1, Bundesliga, Serie A, Champions League, Coupe du Monde, CAN |
 | 🏀 **Basketball** | Matchs NBA du jour |
-| 📊 **Avant-match** | Elo + Poisson (foot) / Elo + Loi Normale (basket) |
+| 📊 **Avant-match** | 1X2 + buts Over/Under 1.5, 2.5, 3.5 + BTTS + double chance (foot) ; Elo + loi normale (basket) |
 | 🔴 **En direct** | Ajustement par score, minute, cartons rouges |
 | 📈 **Graphique** | Évolution des probabilités pendant le match |
 | 🔄 **Auto-refresh** | Mise à jour automatique toutes les 30 secondes |
@@ -133,6 +133,19 @@ car le projet ne possède pas encore d'historique météo lié aux scores pour v
 cet effet. Les blessures, suspensions et compositions ne sont pas incluses : aucune
 source gratuite et vérifiée couvrant ces données n'est configurée. Les compositions
 peuvent en outre ne devenir disponibles que peu avant le coup d'envoi.
+
+### Marchés de pronostics football
+
+Chaque carte football affiche désormais les probabilités modélisées pour les lignes
+de buts Over/Under 1.5, 2.5 et 3.5, les deux équipes marquent (BTTS), ainsi que
+les doubles chances 1X, X2 et 12. Les buts attendus par équipe sont également
+affichés quand le modèle les calcule. Les scores exacts les plus probables restent
+dans les détails du match.
+
+Ces nombres sont des estimations statistiques et ne sont pas des cotes ni des
+Value Bets : l'intégration actuelle de The Odds API ne récupère que le marché
+1X2. Sans historique, les marchés calculés à partir des valeurs par défaut sont
+explicitement signalés comme non validés.
 
 ### Backtest
 

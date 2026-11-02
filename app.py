@@ -653,6 +653,80 @@ def render_probability_bar(probs: dict, show_draw: bool = True):
     """, unsafe_allow_html=True)
 
 
+def render_football_market_forecasts(probs: dict) -> None:
+    """Affiche les estimations de buts, BTTS et double chance."""
+    markets = probs.get("markets")
+    if not isinstance(markets, dict) or not markets:
+        return
+
+    st.markdown("**Buts & autres marchés**")
+    history_matches = int(probs.get("history_matches", 0))
+    if history_matches == 0:
+        st.caption(
+            "Modèle sans historique : estimations indicatives, non validées et "
+            "à ne pas interpréter comme des conseils de pari."
+        )
+    else:
+        st.caption(
+            f"Probabilités estimées par le modèle sur {history_matches} matchs ; "
+            "elles ne constituent pas une garantie."
+        )
+
+    lambda_home = probs.get("lambda_home")
+    lambda_away = probs.get("lambda_away")
+    if lambda_home is not None and lambda_away is not None:
+        st.caption(
+            f"Buts attendus : domicile {lambda_home:.2f} · extérieur {lambda_away:.2f}"
+        )
+
+    st.caption("Total de buts")
+    goal_columns = st.columns(3)
+    for column, line in zip(goal_columns, ("1_5", "2_5", "3_5")):
+        over = float(markets.get(f"over_{line}", 0))
+        under = float(markets.get(f"under_{line}", 0))
+        selected_label, selected_probability = (
+            (f"Plus de {line.replace('_', '.')}", over)
+            if over >= under
+            else (f"Moins de {line.replace('_', '.')}", under)
+        )
+        other_probability = min(over, under)
+        with column:
+            st.metric(
+                selected_label,
+                f"{selected_probability:.1%}",
+                delta=f"Autre issue : {other_probability:.1%}",
+                delta_color="off",
+            )
+
+    btts_yes = float(markets.get("btts_yes", 0))
+    btts_no = float(markets.get("btts_no", 0))
+    btts_label, btts_probability = (
+        ("Oui, les deux marquent", btts_yes)
+        if btts_yes >= btts_no
+        else ("Non, les deux marquent", btts_no)
+    )
+    dc_columns = st.columns(4)
+    with dc_columns[0]:
+        st.metric(
+            btts_label,
+            f"{btts_probability:.1%}",
+            delta=f"Autre issue : {min(btts_yes, btts_no):.1%}",
+            delta_color="off",
+        )
+    for column, key, label in zip(
+        dc_columns[1:],
+        ("dc_1x", "dc_x2", "dc_12"),
+        ("Double chance 1X", "Double chance X2", "Double chance 12"),
+    ):
+        with column:
+            st.metric(label, f"{float(markets.get(key, 0)):.1%}")
+
+    st.caption(
+        "Ces marchés affichent des probabilités du modèle, pas des cotes ni une "
+        "value bet. Les cotes de buts/BTTS ne sont pas intégrées."
+    )
+
+
 def render_match_card(match: dict, probs: dict, sport: str):
     """Affiche une carte de match complète."""
     is_live = match.get("status") in ("IN_PLAY", "PAUSED") or (
@@ -735,14 +809,22 @@ def render_match_card(match: dict, probs: dict, sport: str):
     render_probability_bar(probs, show_draw=show_draw)
 
     # ── Recommandation pronostic ──
-    reco = get_recommendation(probs, sport, match)
-    render_recommendation(reco)
+    if sport == "football" and int(probs.get("history_matches", 0)) == 0:
+        st.info(
+            "Pronostic 1X2 non validé : aucun historique n'a entraîné le modèle."
+        )
+    else:
+        reco = get_recommendation(probs, sport, match)
+        render_recommendation(reco)
 
     # Les informations secondaires restent disponibles sans alourdir la carte.
     top_scores = probs.get("top_scores", [])
     markets = probs.get("markets")
+    if sport == "football":
+        render_football_market_forecasts(probs)
+
     if top_scores or markets or model_type or elo_info:
-        with st.expander("Détails du match et marchés", expanded=False):
+        with st.expander("Scores probables et détails du modèle", expanded=False):
             details = [model_type]
             if elo_info:
                 details.append(elo_info)
@@ -759,34 +841,6 @@ def render_match_card(match: dict, probs: dict, sport: str):
                     f'<div class="match-meta">Scores les plus probables : {scores_html}</div>',
                     unsafe_allow_html=True
                 )
-
-            if markets and sport == "football":
-                st.markdown("**Marchés alternatifs**")
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.markdown(
-                        f"**⚽ Buts**<br>"
-                        f"• +1.5 : <strong>{markets.get('over_1_5', 0)*100:.1f}%</strong><br>"
-                        f"• +2.5 : <strong>{markets.get('over_2_5', 0)*100:.1f}%</strong><br>"
-                        f"• -2.5 : <strong>{markets.get('under_2_5', 0)*100:.1f}%</strong><br>"
-                        f"• +3.5 : <strong>{markets.get('over_3_5', 0)*100:.1f}%</strong>",
-                        unsafe_allow_html=True
-                    )
-                with m2:
-                    st.markdown(
-                        f"**🥅 Les deux marquent**<br>"
-                        f"• Oui : <strong>{markets.get('btts_yes', 0)*100:.1f}%</strong><br>"
-                        f"• Non : <strong>{markets.get('btts_no', 0)*100:.1f}%</strong>",
-                        unsafe_allow_html=True
-                    )
-                with m3:
-                    st.markdown(
-                        f"**🛡️ Double chance**<br>"
-                        f"• 1X : <strong>{markets.get('dc_1x', 0)*100:.1f}%</strong><br>"
-                        f"• X2 : <strong>{markets.get('dc_x2', 0)*100:.1f}%</strong><br>"
-                        f"• 12 : <strong>{markets.get('dc_12', 0)*100:.1f}%</strong>",
-                        unsafe_allow_html=True
-                    )
 
     st.markdown("---")
 

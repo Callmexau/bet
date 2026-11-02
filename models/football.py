@@ -199,7 +199,13 @@ class FootballModel:
             "away_win": p_away_win / total,
         }
 
-    def _score_grid(self, lambda_home: float, lambda_away: float, max_goals: int = 6, use_tau: bool = True) -> dict:
+    def _score_grid(
+        self,
+        lambda_home: float,
+        lambda_away: float,
+        max_goals: int = MAX_GOALS,
+        use_tau: bool = True,
+    ) -> dict:
         grid = {}
         for h in range(max_goals + 1):
             for a in range(max_goals + 1):
@@ -241,6 +247,7 @@ class FootballModel:
             "lambda_away": round(la, 2),
             "home_elo": round(self.elo.get_rating(home_team), 0),
             "away_elo": round(self.elo.get_rating(away_team), 0),
+            "history_matches": len(self.history),
             "top_scores": top_scores,
             "markets": {},
             "model": "prematch_dc_ad",
@@ -313,6 +320,7 @@ class FootballModel:
             "home_score": home_score,
             "away_score": away_score,
             "minute": minute,
+            "history_matches": len(self.history),
             "markets": alt_markets,
             "model": "live_intensity",
         }
