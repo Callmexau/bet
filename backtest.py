@@ -17,15 +17,15 @@ Utilisation :
 import argparse
 import logging
 import json
-import sys
 from datetime import datetime
 import pandas as pd
 import numpy as np
 
-from db import get_history_from_db, init_db
+from db import get_history_from_db
 from models.football import FootballModel
 from models.basketball import BasketballModel
-from models.elo import EloRating
+from models.calibration import TemperatureCalibrator, PlattCalibrator
+from models.features import competition_code
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,6 +83,49 @@ def get_predicted_result(probs: dict) -> str:
     return "D"
 
 
+def simulate_opening_odds_bet(
+    probs: dict,
+    actual: str | None,
+    raw_data: str | dict | None,
+    min_ev: float = 0.03,
+) -> dict | None:
+    """Simule une mise fixe sur le meilleur EV des cotes moyennes d'ouverture."""
+    if not actual or not raw_data:
+        return None
+    match_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+    odds = match_data.get("historical_odds", {}).get("average_opening")
+    if not odds:
+        return None
+
+    outcome_by_market = {
+        "home_win": "H",
+        "draw": "D",
+        "away_win": "A",
+    }
+    candidates = []
+    for market, outcome in outcome_by_market.items():
+        try:
+            odd = float(odds[market])
+            probability = float(probs[market])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if odd > 1:
+            candidates.append((probability * odd - 1, outcome, odd))
+
+    if not candidates:
+        return None
+    ev, outcome, odd = max(candidates)
+    if ev < min_ev:
+        return None
+
+    return {
+        "outcome": outcome,
+        "odds": odd,
+        "ev": ev,
+        "profit_units": odd - 1 if outcome == actual else -1.0,
+    }
+
+
 # ─────────────────────── Backtest Football ─────────────────────────────────
 
 
@@ -117,21 +160,42 @@ def backtest_football(n: int = 200, verbose: bool = True) -> dict:
     brier_draw = []
     brier_away = []
     details = []
+    calibrator = TemperatureCalibrator()
+    cal_probs: list[list[float]] = []
+    cal_y: list[str] = []
+    value_bets = []
 
     for i, test_match in enumerate(test_matches):
         # Entraîner sur tous les matchs précédant ce test
         train_data = matches[:WARMUP + i]
         model = FootballModel()
-        model.train(train_data)
+        model.train(train_data, tune=False, calibrate=False)
 
         # Prédiction avant-match (on ne connaît pas le score)
         probs = model.predict_prematch(
             test_match.get("home_team", ""),
             test_match.get("away_team", ""),
+            comp_code=competition_code(test_match),
+            match_date=test_match.get("match_date"),
+            match=test_match,
+            calibrate=False,
         )
+        raw_p = [probs.get("home_win", 0), probs.get("draw", 0), probs.get("away_win", 0)]
+        if len(cal_probs) >= 20:
+            calibrator.fit(np.array(cal_probs), cal_y)
+            h, d, a = calibrator.transform(*raw_p)
+            probs = {**probs, "home_win": h, "draw": d, "away_win": a}
 
         actual = get_actual_result(test_match)
         predicted = get_predicted_result(probs)
+        simulated_bet = simulate_opening_odds_bet(
+            probs, actual, test_match.get("raw_data"),
+        )
+        if simulated_bet:
+            value_bets.append(simulated_bet)
+
+        cal_probs.append(raw_p)
+        cal_y.append(actual or "D")
 
         predictions_result.append(predicted)
         actuals_result.append(actual)
@@ -166,6 +230,8 @@ def backtest_football(n: int = 200, verbose: bool = True) -> dict:
     bs_draw = brier_score([x[0] for x in brier_draw], [x[1] for x in brier_draw])
     bs_away = brier_score([x[0] for x in brier_away], [x[1] for x in brier_away])
     bs_avg  = (bs_home + bs_draw + bs_away) / 3
+    roi_net_units = sum(bet["profit_units"] for bet in value_bets)
+    roi_pct = roi_net_units / len(value_bets) * 100 if value_bets else None
 
     # Distribution des erreurs
     df = pd.DataFrame(details)
@@ -179,6 +245,10 @@ def backtest_football(n: int = 200, verbose: bool = True) -> dict:
         "brier_home": round(bs_home, 4),
         "brier_draw": round(bs_draw, 4),
         "brier_away": round(bs_away, 4),
+        "value_bets": len(value_bets),
+        "roi_net_units": round(roi_net_units, 2),
+        "roi_pct": round(roi_pct, 2) if roi_pct is not None else None,
+        "roi_min_ev": 0.03,
         "correct_by_outcome": correct_by_type.to_dict(),
     }
 
@@ -188,10 +258,17 @@ def backtest_football(n: int = 200, verbose: bool = True) -> dict:
         print("=" * 60)
         print(f"  Matchs testés    : {len(details)}")
         print(f"  Précision        : {acc:.1%}")
-        print(f"  Brier Score      : {bs_avg:.4f}  (< 0.25 = mieux que random)")
+        print(f"  Brier Score      : {bs_avg:.4f}  (plus bas = mieux; comparer à une baseline)")
         print(f"    ↳ Home         : {bs_home:.4f}")
         print(f"    ↳ Nul          : {bs_draw:.4f}")
         print(f"    ↳ Away         : {bs_away:.4f}")
+        if value_bets:
+            print(
+                f"  ROI simulé      : {roi_pct:+.1f}% "
+                f"({len(value_bets)} mises fixes, cotes moyennes d'ouverture, EV ≥ 3%)"
+            )
+        else:
+            print("  ROI simulé      : indisponible (pas de cotes d'ouverture exploitables)")
         print()
         print("  Précision par type de résultat :")
         for outcome, row in correct_by_type.iterrows():
@@ -241,19 +318,31 @@ def backtest_basketball(n: int = 200, verbose: bool = True) -> dict:
     brier_home = []
     brier_away = []
     details = []
+    calibrator = PlattCalibrator()
+    cal_p: list[float] = []
+    cal_y: list[float] = []
 
     for i, test_match in enumerate(test_matches):
         train_data = matches[:WARMUP + i]
         model = BasketballModel()
-        model.train(train_data)
+        model.train(train_data, calibrate=False)
 
         probs = model.predict_prematch(
             test_match.get("home_team", ""),
             test_match.get("away_team", ""),
+            match_date=test_match.get("match_date"),
+            calibrate=False,
         )
+        raw_ph = probs.get("home_win", 0.5)
+        if len(cal_p) >= 20:
+            calibrator.fit(np.array(cal_p), np.array(cal_y))
+            ph = calibrator.transform(raw_ph)
+            probs = {**probs, "home_win": ph, "away_win": 1.0 - ph}
 
         actual = get_actual_result(test_match)
         predicted = "H" if probs.get("home_win", 0.5) >= 0.5 else "A"
+        cal_p.append(raw_ph)
+        cal_y.append(1.0 if actual == "H" else 0.0)
 
         predictions_result.append(predicted)
         actuals_result.append(actual)

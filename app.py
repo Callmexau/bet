@@ -10,6 +10,7 @@ Lancement : streamlit run app.py
 
 import time
 import logging
+import json
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -882,6 +883,8 @@ def build_probability_chart(history: list[dict], home_team: str, away_team: str,
 
 # Les clients API ne sont PAS mis en cache (pour éviter de figer les méthodes).
 # Les modèles Elo SONT mis en cache car leur entraînement est coûteux.
+TRAINING_HISTORY_LIMIT = 5000
+FOOTBALL_PREMATCH_STATUSES = {"SCHEDULED", "TIMED"}
 
 def get_football_client() -> FootballClient:
     return FootballClient()
@@ -895,24 +898,48 @@ def get_odds_client() -> OddsClient:
     return OddsClient()
 
 
-@st.cache_resource(show_spinner=False)
-def get_football_model() -> FootballModel:
+def _training_history_json(sport: str) -> str:
+    history = get_history_from_db(sport, limit=TRAINING_HISTORY_LIMIT)
+    training_rows = [
+        {
+            "home_team": match["home_team"],
+            "away_team": match["away_team"],
+            "home_score": match["home_score"],
+            "away_score": match["away_score"],
+            "match_date": match["match_date"],
+            "competition": match.get("competition"),
+        }
+        for match in history
+    ]
+    return json.dumps(training_rows, ensure_ascii=False, sort_keys=True)
+
+
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _train_football_model(history_json: str) -> FootballModel:
     """Instancie et entraîne le modèle football sur l'historique en DB."""
     model = FootballModel()
-    history = get_history_from_db("football", limit=500)
+    history = json.loads(history_json)
     if history:
-        model.train(history)
+        model.train(history, tune=True, calibrate=True)
     return model
 
 
-@st.cache_resource(show_spinner=False)
-def get_basketball_model() -> BasketballModel:
+def get_football_model() -> FootballModel:
+    return _train_football_model(_training_history_json("football"))
+
+
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _train_basketball_model(history_json: str) -> BasketballModel:
     """Instancie et entraîne le modèle basketball sur l'historique en DB."""
     model = BasketballModel()
-    history = get_history_from_db("basketball", limit=500)
+    history = json.loads(history_json)
     if history:
-        model.train(history)
+        model.train(history, calibrate=True)
     return model
+
+
+def get_basketball_model() -> BasketballModel:
+    return _train_basketball_model(_training_history_json("basketball"))
 
 
 def render_sidebar():
@@ -1011,8 +1038,8 @@ def render_football_tab():
         """, unsafe_allow_html=True)
         return
 
-    # Trier : LIVE en premier, puis SCHEDULED, puis FINISHED
-    status_order = {"IN_PLAY": 0, "PAUSED": 1, "SCHEDULED": 2, "FINISHED": 3}
+    # L'API peut classer un match à venir comme SCHEDULED ou TIMED.
+    status_order = {"IN_PLAY": 0, "PAUSED": 1, "TIMED": 2, "SCHEDULED": 2, "FINISHED": 3}
     matches = sorted(matches, key=lambda m: status_order.get(m.get("status", ""), 99))
 
     # Filtres
@@ -1032,7 +1059,7 @@ def render_football_tab():
         matches = [m for m in matches if m.get("competition") == selected_comp]
 
     live_matches = [m for m in matches if m.get("status") in ("IN_PLAY", "PAUSED")]
-    scheduled    = [m for m in matches if m.get("status") == "SCHEDULED"]
+    scheduled    = [m for m in matches if m.get("status") in FOOTBALL_PREMATCH_STATUSES]
     finished     = [m for m in matches if m.get("status") == "FINISHED"]
 
     # Métriques rapides
@@ -1061,10 +1088,8 @@ def render_football_tab():
             probs = model.predict(match)
 
             # Sauvegarde des prédictions pour analyse
-            try:
-                save_prediction(str(match["id"]), "football", match.get("minute"), probs)
-            except Exception:
-                pass
+            if match.get("status") in FOOTBALL_PREMATCH_STATUSES:
+                save_prediction(str(match["id"]), "football", None, probs)
 
             render_match_card(match, probs, sport="football")
 
@@ -1150,10 +1175,8 @@ def render_basketball_tab():
         with cols[i % 2]:
             probs = model.predict(match)
 
-            try:
+            if not match.get("period") and match.get("status") != "Final":
                 save_prediction(str(match["id"]), "basketball", None, probs)
-            except Exception:
-                pass
 
             render_match_card(match, probs, sport="basketball")
 
@@ -1524,7 +1547,7 @@ def render_bets_journal_tab():
                 b_pick = st.text_input("Sélection / Pronostic", placeholder="ex: Victoire Real Madrid @ 2.10")
                 b_odd = st.number_input("Cote décimale", min_value=1.01, max_value=200.0, value=1.90, step=0.05)
                 default_stake = 5000 if currency == "FCFA" else 20.0
-                b_stake = st.number_input(f"Mise ({currency})", min_value=100 if currency == "FCFA" else 1.0, value=float(default_stake), step=500.0 if currency == "FCFA" else 5.0)
+                b_stake = st.number_input(f"Mise ({currency})", min_value=100.0 if currency == "FCFA" else 1.0, value=float(default_stake), step=500.0 if currency == "FCFA" else 5.0)
 
             submitted = st.form_submit_button("💾 Enregistrer le pari", use_container_width=True)
             if submitted:
@@ -1983,8 +2006,8 @@ def render_performance_tab():
 
     st.markdown("### 📊 Performance du modèle")
     st.markdown(
-        "<small style='color:#8b949e'>Basé sur les prédictions sauvegardées "
-        "comparées aux résultats réels des matchs terminés.</small>",
+        "<small style='color:#8b949e'>Basé sur la première prédiction pré-match sauvegardée "
+        "et comparée au score final.</small>",
         unsafe_allow_html=True,
     )
 
@@ -1992,14 +2015,24 @@ def render_performance_tab():
     try:
         conn = get_db_connection()
         rows = conn.execute("""
-            SELECT p.match_id, p.sport, p.predicted_home_win, p.predicted_draw,
-                   p.predicted_away_win, p.minute,
-                   m.home_score, m.away_score, m.status
+            SELECT p.match_id, p.sport,
+                   p.home_win_prob AS predicted_home_win,
+                   p.draw_prob AS predicted_draw,
+                   p.away_win_prob AS predicted_away_win,
+                   p.minute,
+                   m.home_score, m.away_score
             FROM predictions p
-            LEFT JOIN matches m ON p.match_id = m.match_id
-            WHERE m.status = 'FINISHED'
+            JOIN match_history m ON p.match_id = m.id AND p.sport = m.sport
+            WHERE p.minute IS NULL
               AND m.home_score IS NOT NULL
               AND m.away_score IS NOT NULL
+              AND p.id = (
+                  SELECT MIN(first_p.id)
+                  FROM predictions first_p
+                  WHERE first_p.match_id = p.match_id
+                    AND first_p.sport = p.sport
+                    AND first_p.minute IS NULL
+              )
             ORDER BY p.id DESC
             LIMIT 200
         """).fetchall()
@@ -2011,9 +2044,8 @@ def render_performance_tab():
     if not rows:
         st.info(
             "📭 Pas encore de données de performance.\n\n"
-            "Les prédictions sont enregistrées automatiquement au fur et à mesure "
-            "que l'application calcule des pronostics sur des matchs terminés. "
-            "Revenez après quelques sessions !"
+            "Les pronostics pré-match sont enregistrés pour les matchs à venir, "
+            "puis évalués une fois leur résultat final disponible."
         )
         # Afficher quand même le guide de lecture
         st.markdown("---")

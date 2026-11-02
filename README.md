@@ -72,7 +72,43 @@ Ouvrez votre navigateur sur **http://localhost:8501**
 
 ## 🧪 Backtest
 
-Après avoir accumulé des données (en laissant tourner l'app quelques jours) :
+### Amorcer l'historique football
+
+Les pronostics peuvent s'afficher sans base préremplie, mais leur entraînement et leur
+calibration sont limités tant que l'application n'a pas accumulé de résultats.
+Pour importer gratuitement des résultats historiques, téléchargez les CSV des ligues
+souhaitées depuis [Football-Data.co.uk](https://www.football-data.co.uk/data.php)
+(par exemple Premier League `E0`, La Liga `SP1`, Bundesliga `D1`, Serie A `I1`,
+Ligue 1 `F1`), puis lancez depuis la racine du projet :
+
+```bash
+# Contrôler les fichiers sans écrire dans la base
+python import_history.py --dry-run "C:\data\E0.csv" "C:\data\SP1.csv"
+
+# Importer plusieurs saisons ou ligues (réimportable sans créer de doublons)
+python import_history.py "C:\data\E0_2425.csv" "C:\data\E0_2526.csv" "C:\data\SP1_2526.csv"
+```
+
+Le format attendu est celui de Football-Data.co.uk (`Date`, `HomeTeam`, `AwayTeam`,
+`FTHG`, `FTAG`). Les lignes sans score final sont ignorées ; les fichiers sont
+importés dans la même base `cache.db` que celle utilisée par l'application.
+Les cotes moyennes d'ouverture sont utilisées par le ROI simulé ; les cotes de
+clôture présentes dans les CSV sont également conservées avec le match. Les
+compétitions et saisons disponibles varient selon le site et le fichier.
+
+Après l'import, relancez Streamlit : le modèle se réentraîne lorsque l'historique
+change. Le modèle utilise au maximum ses 5 000 matchs les plus récents par sport.
+Lancez ensuite le backtest pour vérifier la qualité prédictive avant de vous fier
+aux probabilités.
+
+Le backtest football affiche aussi un ROI simulé sur mises unitaires, à partir des
+cotes moyennes d'ouverture importées et du seuil EV par défaut de 3 %. C'est une
+simulation historique, pas une promesse de rendement ; les résultats dépendent
+des fichiers et des cotes effectivement disponibles.
+
+### Backtest
+
+Après avoir importé ou accumulé des données :
 
 ```bash
 # Football (200 matchs par défaut)
@@ -93,7 +129,8 @@ python backtest.py --n 50
 | Métrique | Description |
 |---|---|
 | **Accuracy** | % de prédictions correctes (résultat le plus probable) |
-| **Brier Score** | Qualité de calibration (< 0.25 = mieux que random, 0 = parfait) |
+| **Brier Score** | Erreur des probabilités (plus bas = mieux ; comparer à une baseline) |
+| **ROI simulé** | Rendement historique à mise fixe sur les matchs avec cotes utilisables |
 
 ---
 
@@ -104,6 +141,7 @@ bet/
 ├── app.py              # Interface Streamlit principale
 ├── data_client.py      # Clients API (FootballClient, BasketballClient)
 ├── db.py               # Cache SQLite + persistance
+├── import_history.py   # Import de résultats historiques Football-Data.co.uk
 ├── backtest.py         # Évaluation walk-forward des modèles
 ├── requirements.txt
 ├── .env.example        # Template des clés API

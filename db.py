@@ -98,6 +98,8 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_cache_key ON api_cache(cache_key);
             CREATE INDEX IF NOT EXISTS idx_match_history_sport ON match_history(sport);
+            CREATE INDEX IF NOT EXISTS idx_match_history_sport_date
+                ON match_history(sport, match_date DESC);
             CREATE INDEX IF NOT EXISTS idx_predictions_match ON predictions(match_id);
             CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
         """)
@@ -155,30 +157,53 @@ def save_match(match: dict, sport: str):
     """
     Persiste un match terminé dans l'historique pour le backtest.
     """
+    save_matches([match], sport)
+
+
+def save_matches(matches: list[dict], sport: str):
+    """Persiste plusieurs matchs dans une transaction."""
+    if not matches:
+        return
+
     with managed_connection() as conn:
-        conn.execute(
+        conn.executemany(
             """
             INSERT OR REPLACE INTO match_history
                 (id, sport, home_team, away_team, home_score, away_score, match_date, competition, raw_data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                str(match.get("id")),
-                sport,
-                match.get("home_team", ""),
-                match.get("away_team", ""),
-                match.get("home_score"),
-                match.get("away_score"),
-                match.get("match_date", ""),
-                match.get("competition", ""),
-                json.dumps(match, ensure_ascii=False),
-            )
+            [
+                (
+                    str(match.get("id")),
+                    sport,
+                    match.get("home_team", ""),
+                    match.get("away_team", ""),
+                    match.get("home_score"),
+                    match.get("away_score"),
+                    match.get("match_date", ""),
+                    match.get("competition", ""),
+                    json.dumps(match, ensure_ascii=False),
+                )
+                for match in matches
+            ],
         )
 
 
 def save_prediction(match_id: str, sport: str, minute: int | None, probs: dict):
     """Sauvegarde une prédiction pour analyse ultérieure."""
     with managed_connection() as conn:
+        if minute is None:
+            existing = conn.execute(
+                """
+                SELECT 1 FROM predictions
+                WHERE match_id = ? AND sport = ? AND minute IS NULL
+                LIMIT 1
+                """,
+                (str(match_id), sport),
+            ).fetchone()
+            if existing is not None:
+                return
+
         conn.execute(
             """
             INSERT INTO predictions (match_id, sport, minute, home_win_prob, draw_prob, away_win_prob)
