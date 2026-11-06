@@ -1263,23 +1263,36 @@ def render_sidebar():
         st.markdown("---")
 
         # Compétitions suivies
-        st.markdown("### 🏆 Compétitions Football (14)")
-        st.markdown(
-            "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Premier League** (PL)\n"
-            "- 🇪🇸 **La Liga** (PD)\n"
-            "- 🇫🇷 **Ligue 1** (FL1)\n"
-            "- 🇩🇪 **Bundesliga** (BL1)\n"
-            "- 🇮🇹 **Serie A** (SA)\n"
-            "- 🇳🇱 **Eredivisie** (DED)\n"
-            "- 🇵🇹 **Primeira Liga** (PPL)\n"
-            "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Championship** (ELC)\n"
-            "- 🇧🇷 **Brasileirão Série A** (BSA)\n"
-            "- ⭐ **Champions League** (CL)\n"
-            "- 🌎 **Copa Libertadores** (CLI)\n"
-            "- 🏆 **Coupe du Monde** (WC)\n"
-            "- 🇪🇺 **Euro** (EC)\n"
-            "- 🌍 **CAN** (CAF)"
-        )
+        with st.expander("🏆 Compétitions Football (25)", expanded=False):
+            st.markdown(
+                "**football-data.org (13) :**\n"
+                "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Premier League** (PL)\n"
+                "- 🇪🇸 **La Liga** (PD)\n"
+                "- 🇫🇷 **Ligue 1** (FL1)\n"
+                "- 🇩🇪 **Bundesliga** (BL1)\n"
+                "- 🇮🇹 **Serie A** (SA)\n"
+                "- 🇳🇱 **Eredivisie** (DED)\n"
+                "- 🇵🇹 **Primeira Liga** (PPL)\n"
+                "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Championship** (ELC)\n"
+                "- 🇧🇷 **Brasileirão Série A** (BSA)\n"
+                "- ⭐ **Champions League** (CL)\n"
+                "- 🌎 **Copa Libertadores** (CLI)\n"
+                "- 🏆 **Coupe du Monde** (WC)\n"
+                "- 🇪🇺 **Euro** (EC)\n\n"
+                "**The Odds API (12) :**\n"
+                "- 🇪🇺 **Ligue Europa** (UEL)\n"
+                "- 🇪🇺 **Ligue Conférence** (UECL)\n"
+                "- 🇫🇷 **Ligue 2** (FL2)\n"
+                "- 🇪🇸 **La Liga 2** (SD)\n"
+                "- 🇮🇹 **Serie B** (SB)\n"
+                "- 🇩🇪 **2. Bundesliga** (BL2)\n"
+                "- 🇸🇦 **Saudi Pro League** (SPL)\n"
+                "- 🇺🇸 **MLS** (MLS)\n"
+                "- 🇹🇷 **Süper Lig** (TSL)\n"
+                "- 🇧🇪 **Jupiler Pro League** (BPL)\n"
+                "- 🏴󠁧󠁢󠁳󠁣󠁴󠁿 **Premiership** (SCO)\n"
+                "- 🌍 **CAN** (CAF)"
+            )
 
         st.markdown("---")
 
@@ -1926,7 +1939,12 @@ def render_bets_journal_tab():
                 b_match = st.text_input("Match", placeholder="ex: Real Madrid vs Barcelone")
                 b_comp = st.selectbox(
                     "Compétition",
-                    ["Premier League", "La Liga", "Ligue 1", "Bundesliga", "Serie A", "Champions League", "Coupe du Monde", "CAN", "NBA", "Autre"]
+                    [
+                        "Premier League", "La Liga", "Ligue 1", "Bundesliga", "Serie A",
+                        "Champions League", "Ligue Europa", "Ligue Conférence", "Ligue 2", "La Liga 2", "Serie B", "2. Bundesliga",
+                        "Saudi Pro League", "MLS", "Süper Lig", "Jupiler Pro League", "Premiership",
+                        "Coupe du Monde", "CAN", "NBA", "Autre"
+                    ]
                 )
                 b_market = st.selectbox(
                     "Marché",

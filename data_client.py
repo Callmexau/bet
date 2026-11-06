@@ -23,8 +23,25 @@ FOOTBALL_BASE_URL   = "https://api.football-data.org/v4"
 BALLDONTLIE_BASE_URL = "https://api.balldontlie.io/v1"
 ODDS_BASE_URL        = "https://api.the-odds-api.com/v4"
 
+# Compétitions supplémentaires suivies via The Odds API (Option 1)
+ODDS_API_EXTRA_COMPETITIONS = {
+    "UEL":  ("soccer_uefa_europa_league", "UEFA Europa League"),
+    "UECL": ("soccer_uefa_europa_conference_league", "UEFA Europa Conference League"),
+    "FL2":  ("soccer_france_ligue_two", "Ligue 2"),
+    "SD":   ("soccer_spain_segunda_division", "La Liga 2"),
+    "SB":   ("soccer_italy_serie_b", "Serie B"),
+    "BL2":  ("soccer_germany_bundesliga2", "2. Bundesliga"),
+    "SPL":  ("soccer_saudi_arabia_pro_league", "Saudi Pro League"),
+    "MLS":  ("soccer_usa_mls", "Major League Soccer"),
+    "TSL":  ("soccer_turkey_super_league", "Süper Lig"),
+    "BPL":  ("soccer_belgium_first_div", "Jupiler Pro League"),
+    "SCO":  ("soccer_spl", "Premiership"),
+    "CAN":  ("soccer_caf_nations_cup", "Coupe d'Afrique des Nations (CAN)"),
+}
+
 # Compétitions suivies (football-data.org Tier One + The Odds API)
 FOOTBALL_COMPETITIONS = [
+    # --- Plan gratuit football-data.org (13 ligues Tier One) ---
     "PL",   # Premier League (Angleterre)
     "PD",   # La Liga (Espagne)
     "FL1",  # Ligue 1 (France)
@@ -38,10 +55,23 @@ FOOTBALL_COMPETITIONS = [
     "CLI",  # Copa Libertadores (CONMEBOL)
     "WC",   # Coupe du Monde (FIFA World Cup)
     "EC",   # Championnat d'Europe (Euro UEFA)
+    # --- Option 1 : Compétitions via The Odds API ---
+    "UEL",  # Ligue Europa (UEFA)
+    "UECL", # Ligue Conférence (UEFA)
+    "FL2",  # Ligue 2 (France)
+    "SD",   # La Liga 2 (Espagne)
+    "SB",   # Serie B (Italie)
+    "BL2",  # 2. Bundesliga (Allemagne)
+    "SPL",  # Saudi Pro League (Arabie Saoudite)
+    "MLS",  # Major League Soccer (USA)
+    "TSL",  # Süper Lig (Turquie)
+    "BPL",  # Jupiler Pro League (Belgique)
+    "SCO",  # Premiership (Écosse)
     "CAN",  # Coupe d'Afrique des Nations (CAF)
 ]
 FOOTBALL_HISTORY_COMPETITIONS = tuple(
-    competition for competition in FOOTBALL_COMPETITIONS if competition != "CAN"
+    competition for competition in FOOTBALL_COMPETITIONS
+    if competition not in ODDS_API_EXTRA_COMPETITIONS
 )
 LIVE_REFRESH_INTERVAL_SECONDS = 30
 UPCOMING_REFRESH_INTERVAL_SECONDS = 35 * 60
@@ -266,10 +296,9 @@ class FootballClient(BaseClient):
                         normalized = self._normalize_match(m)
                         all_matches.append(normalized)
 
-        # 2. Matchs CAN (via The Odds API si active)
-        if "CAN" in FOOTBALL_COMPETITIONS:
-            can_matches = self._get_can_matches(today, today)
-            all_matches.extend(can_matches)
+        # 2. Matchs additionnels (Option 1 via The Odds API : Ligue Europa, Ligue 2, MLS, Saudi...)
+        odds_matches = self._get_odds_api_matches(today, today)
+        all_matches.extend(odds_matches)
 
         cache_set(cache_key, all_matches, ttl=_match_list_cache_ttl(all_matches))
         logger.info("Football: %d matchs aujourd'hui", len(all_matches))
@@ -304,7 +333,7 @@ class FootballClient(BaseClient):
                     all_matches.append(normalized)
         else:
             # Fallback par compétition
-            fd_comps = [c for c in FOOTBALL_COMPETITIONS if c != "CAN"]
+            fd_comps = [c for c in FOOTBALL_COMPETITIONS if c not in ODDS_API_EXTRA_COMPETITIONS]
             for comp in fd_comps:
                 url_c = f"{FOOTBALL_BASE_URL}/competitions/{comp}/matches"
                 data_c = self._safe_request(url_c, headers=self.headers, params={"dateFrom": today.isoformat(), "dateTo": end.isoformat()})
@@ -313,46 +342,52 @@ class FootballClient(BaseClient):
                         normalized = self._normalize_match(m)
                         all_matches.append(normalized)
 
-        # 2. Matchs CAN (via The Odds API si active)
-        if "CAN" in FOOTBALL_COMPETITIONS:
-            can_matches = self._get_can_matches(today.isoformat(), end.isoformat())
-            all_matches.extend(can_matches)
+        # 2. Matchs additionnels (Option 1 via The Odds API)
+        odds_matches = self._get_odds_api_matches(today.isoformat(), end.isoformat())
+        all_matches.extend(odds_matches)
 
         cache_set(cache_key, all_matches, ttl=_match_list_cache_ttl(all_matches))
         logger.info("Football: %d matchs cette semaine", len(all_matches))
         return all_matches
 
-    def _get_can_matches(self, date_from: str, date_to: str) -> list[dict]:
-        """Tente de récupérer les matchs de la CAN via The Odds API si la compétition est active."""
-        can_matches = []
+    def _get_odds_api_matches(self, date_from: str, date_to: str) -> list[dict]:
+        """Récupère les matchs programmés des ligues The Odds API (Ligue Europa, Ligue 2, MLS, Saudi Pro League...)."""
+        extra_matches = []
         try:
             odds_client = OddsClient()
             if odds_client._is_available():
-                events = odds_client.get_odds_for_sport("soccer_caf_nations_cup")
-                for ev in events:
-                    match_date = ev.get("commence_time", "")[:10]
-                    if date_from <= match_date <= date_to:
-                        can_matches.append({
-                            "id": f"can_{ev.get('id')}",
-                            "sport": "football",
-                            "home_team": ev.get("home_team", "?"),
-                            "away_team": ev.get("away_team", "?"),
-                            "home_score": None,
-                            "away_score": None,
-                            "home_score_ht": None,
-                            "away_score_ht": None,
-                            "status": "SCHEDULED",
-                            "minute": None,
-                            "match_date": match_date,
-                            "competition": "Coupe d'Afrique des Nations (CAN)",
-                            "competition_code": "CAN",
-                            "red_cards_home": 0,
-                            "red_cards_away": 0,
-                            "raw": ev,
-                        })
+                active_sports = odds_client.get_active_sport_keys()
+                for comp_code, (sport_key, comp_name) in ODDS_API_EXTRA_COMPETITIONS.items():
+                    if active_sports and sport_key not in active_sports:
+                        continue
+                    events = odds_client.get_odds_for_sport(sport_key)
+                    for ev in events:
+                        match_date = ev.get("commence_time", "")[:10]
+                        if date_from <= match_date <= date_to:
+                            extra_matches.append({
+                                "id": f"odds_{ev.get('id')}",
+                                "sport": "football",
+                                "home_team": ev.get("home_team", "?"),
+                                "away_team": ev.get("away_team", "?"),
+                                "home_score": None,
+                                "away_score": None,
+                                "home_score_ht": None,
+                                "away_score_ht": None,
+                                "status": "SCHEDULED",
+                                "minute": None,
+                                "match_date": match_date,
+                                "competition": comp_name,
+                                "competition_code": comp_code,
+                                "red_cards_home": 0,
+                                "red_cards_away": 0,
+                                "raw": ev,
+                            })
         except Exception as e:
-            logger.debug("Pas de matchs CAN disponibles: %s", e)
-        return can_matches
+            logger.debug("Pas de matchs Odds API disponibles: %s", e)
+        return extra_matches
+
+    def _get_can_matches(self, date_from: str, date_to: str) -> list[dict]:
+        return self._get_odds_api_matches(date_from, date_to)
 
     def get_live_match(self, match_id: int | str) -> dict | None:
         """Retourne l'état actuel d'un match en cours (données fraîches)."""
@@ -593,22 +628,34 @@ class BasketballClient(BaseClient):
 
 # ──────────────────────── Client Odds (Cotes) ──────────────────────────────
 
-# Mapping des compétitions football-data.org vers les sport-keys The Odds API
+# Mapping des compétitions football-data.org et The Odds API vers les sport-keys
 FOOTBALL_TO_ODDS_KEY = {
-    "PL":  "soccer_epl",
-    "PD":  "soccer_spain_la_liga",
-    "FL1": "soccer_france_ligue_one",
-    "BL1": "soccer_germany_bundesliga",
-    "SA":  "soccer_italy_serie_a",
-    "DED": "soccer_netherlands_eredivisie",
-    "PPL": "soccer_portugal_primeira_liga",
-    "ELC": "soccer_efl_champ",
-    "BSA": "soccer_brazil_campeonato",
-    "CL":  "soccer_uefa_champs_league",
-    "CLI": "soccer_conmebol_copa_libertadores",
-    "WC":  "soccer_fifa_world_cup",
-    "EC":  "soccer_uefa_european_championship",
-    "CAN": "soccer_caf_nations_cup",
+    "PL":   "soccer_epl",
+    "PD":   "soccer_spain_la_liga",
+    "FL1":  "soccer_france_ligue_one",
+    "BL1":  "soccer_germany_bundesliga",
+    "SA":   "soccer_italy_serie_a",
+    "DED":  "soccer_netherlands_eredivisie",
+    "PPL":  "soccer_portugal_primeira_liga",
+    "ELC":  "soccer_efl_champ",
+    "BSA":  "soccer_brazil_campeonato",
+    "CL":   "soccer_uefa_champs_league",
+    "CLI":  "soccer_conmebol_copa_libertadores",
+    "WC":   "soccer_fifa_world_cup",
+    "EC":   "soccer_uefa_european_championship",
+    # Option 1 : Ligues additionnelles
+    "UEL":  "soccer_uefa_europa_league",
+    "UECL": "soccer_uefa_europa_conference_league",
+    "FL2":  "soccer_france_ligue_two",
+    "SD":   "soccer_spain_segunda_division",
+    "SB":   "soccer_italy_serie_b",
+    "BL2":  "soccer_germany_bundesliga2",
+    "SPL":  "soccer_saudi_arabia_pro_league",
+    "MLS":  "soccer_usa_mls",
+    "TSL":  "soccer_turkey_super_league",
+    "BPL":  "soccer_belgium_first_div",
+    "SCO":  "soccer_spl",
+    "CAN":  "soccer_caf_nations_cup",
 }
 
 
@@ -693,13 +740,38 @@ class OddsClient(BaseClient):
         logger.info("Odds: %d événements pour %s", len(results), sport_key)
         return results
 
+    def get_active_sport_keys(self) -> set[str]:
+        """
+        Récupère les clés des sports actuellement actifs sur The Odds API.
+        Mis en cache 1 heure pour préserver le quota de requêtes (500 req/mois).
+        """
+        if not self._is_available():
+            return set()
+
+        cache_key = "odds:active_sports"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return set(cached)
+
+        url = f"{ODDS_BASE_URL}/sports"
+        data = self._safe_request(url, params={"apiKey": self.api_key})
+        if data and isinstance(data, list):
+            keys = [s["key"] for s in data if s.get("active")]
+            cache_set(cache_key, keys, ttl=3600)
+            return set(keys)
+        return set()
+
     def get_football_odds(self) -> dict[str, list[dict]]:
         """
         Récupère les cotes de toutes les compétitions de football suivies.
         Retourne un dict {competition_code: [odds_events]}.
+        Filtre par les sports actuellement actifs pour économiser le quota d'API.
         """
+        active_sports = self.get_active_sport_keys()
         all_odds = {}
         for comp_code, odds_key in FOOTBALL_TO_ODDS_KEY.items():
+            if active_sports and odds_key not in active_sports:
+                continue
             events = self.get_odds_for_sport(odds_key)
             if events:
                 all_odds[comp_code] = events
