@@ -9,7 +9,7 @@ avec des probabilités de victoire calculées par des modèles ML, mises à jour
 
 | Feature | Description |
 |---|---|
-| ⚽ **Football** | Premier League, La Liga, Ligue 1, Bundesliga, Serie A, Champions League, Coupe du Monde, CAN |
+| ⚽ **Football** | 14 compétitions : Premier League, La Liga, Ligue 1, Bundesliga, Serie A, Eredivisie, Primeira Liga, Championship, Brasileirão, Champions League, Copa Libertadores, Coupe du Monde, Euro, CAN |
 | 🏀 **Basketball** | Matchs NBA du jour |
 | 📊 **Avant-match** | 1X2 combine modèle et marché sans marge (si cotes disponibles) ; buts/BTTS/double chance (foot) ; Elo + loi normale (basket) |
 | 🔴 **En direct** | Ajustement par score, minute, cartons rouges |

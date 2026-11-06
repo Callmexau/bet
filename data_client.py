@@ -23,15 +23,21 @@ FOOTBALL_BASE_URL   = "https://api.football-data.org/v4"
 BALLDONTLIE_BASE_URL = "https://api.balldontlie.io/v1"
 ODDS_BASE_URL        = "https://api.the-odds-api.com/v4"
 
-# Compétitions suivies (football-data.org + The Odds API)
+# Compétitions suivies (football-data.org Tier One + The Odds API)
 FOOTBALL_COMPETITIONS = [
     "PL",   # Premier League (Angleterre)
     "PD",   # La Liga (Espagne)
     "FL1",  # Ligue 1 (France)
     "BL1",  # Bundesliga (Allemagne)
     "SA",   # Serie A (Italie)
+    "DED",  # Eredivisie (Pays-Bas)
+    "PPL",  # Primeira Liga (Portugal)
+    "ELC",  # Championship (Angleterre D2)
+    "BSA",  # Campeonato Brasileiro Série A (Brésil)
     "CL",   # Ligue des Champions (UEFA)
+    "CLI",  # Copa Libertadores (CONMEBOL)
     "WC",   # Coupe du Monde (FIFA World Cup)
+    "EC",   # Championnat d'Europe (Euro UEFA)
     "CAN",  # Coupe d'Afrique des Nations (CAF)
 ]
 FOOTBALL_HISTORY_COMPETITIONS = tuple(
@@ -594,8 +600,14 @@ FOOTBALL_TO_ODDS_KEY = {
     "FL1": "soccer_france_ligue_one",
     "BL1": "soccer_germany_bundesliga",
     "SA":  "soccer_italy_serie_a",
+    "DED": "soccer_netherlands_eredivisie",
+    "PPL": "soccer_portugal_primeira_liga",
+    "ELC": "soccer_efl_champ",
+    "BSA": "soccer_brazil_campeonato",
     "CL":  "soccer_uefa_champs_league",
+    "CLI": "soccer_conmebol_copa_libertadores",
     "WC":  "soccer_fifa_world_cup",
+    "EC":  "soccer_uefa_european_championship",
     "CAN": "soccer_caf_nations_cup",
 }
 

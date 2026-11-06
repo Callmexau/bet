@@ -1263,15 +1263,21 @@ def render_sidebar():
         st.markdown("---")
 
         # Compétitions suivies
-        st.markdown("### 🏆 Compétitions Football")
+        st.markdown("### 🏆 Compétitions Football (14)")
         st.markdown(
             "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Premier League** (PL)\n"
             "- 🇪🇸 **La Liga** (PD)\n"
             "- 🇫🇷 **Ligue 1** (FL1)\n"
             "- 🇩🇪 **Bundesliga** (BL1)\n"
             "- 🇮🇹 **Serie A** (SA)\n"
+            "- 🇳🇱 **Eredivisie** (DED)\n"
+            "- 🇵🇹 **Primeira Liga** (PPL)\n"
+            "- 🏴󠁧󠁢󠁥󠁮󠁧󠁿 **Championship** (ELC)\n"
+            "- 🇧🇷 **Brasileirão Série A** (BSA)\n"
             "- ⭐ **Champions League** (CL)\n"
+            "- 🌎 **Copa Libertadores** (CLI)\n"
             "- 🏆 **Coupe du Monde** (WC)\n"
+            "- 🇪🇺 **Euro** (EC)\n"
             "- 🌍 **CAN** (CAF)"
         )
 

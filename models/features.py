@@ -9,7 +9,7 @@ import math
 from collections import defaultdict
 from datetime import date, datetime
 
-NEUTRAL_COMP_TOKENS = ("WC", "CAN", "WORLD CUP", "NATIONS", "CLUB WORLD")
+NEUTRAL_COMP_TOKENS = ("WC", "CAN", "EC", "WORLD CUP", "NATIONS", "EURO", "CLUB WORLD")
 
 COMP_NAME_TO_CODE = {
     "PREMIER LEAGUE": "PL",
@@ -18,10 +18,18 @@ COMP_NAME_TO_CODE = {
     "LIGUE 1": "FL1",
     "BUNDESLIGA": "BL1",
     "SERIE A": "SA",
+    "EREDIVISIE": "DED",
+    "PRIMEIRA LIGA": "PPL",
+    "CHAMPIONSHIP": "ELC",
+    "CAMPEONATO BRASILEIRO SÉRIE A": "BSA",
+    "CAMPEONATO BRASILEIRO SERIE A": "BSA",
     "UEFA CHAMPIONS LEAGUE": "CL",
     "CHAMPIONS LEAGUE": "CL",
+    "COPA LIBERTADORES": "CLI",
     "FIFA WORLD CUP": "WC",
     "WORLD CUP": "WC",
+    "EUROPEAN CHAMPIONSHIP": "EC",
+    "EURO": "EC",
     "AFRICA CUP OF NATIONS": "CAN",
     "COUPE D'AFRIQUE DES NATIONS": "CAN",
     "COUPE D'AFRIQUE DES NATIONS (CAN)": "CAN",
